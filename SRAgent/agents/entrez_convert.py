@@ -22,6 +22,10 @@ def create_entrez_convert_agent(
     model_name: str = None,
     return_tool: bool = True,
 ) -> Callable:
+    """
+    Convert Entrez IDs to SRA/ENA accessions.
+    """     
+
     # create model
     model_supervisor = set_model(model_name=model_name, agent_name="entrez_convert")
 

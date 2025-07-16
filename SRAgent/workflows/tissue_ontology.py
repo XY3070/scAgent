@@ -31,9 +31,10 @@ class UBERON_IDS(BaseModel):
 def create_tissue_ontology_workflow(
     model_name: Optional[str]=None,
     return_tool: bool=True,
+    service_tier: Optional[str]=None,
 ) -> Callable:
     # create model
-    model = set_model(model_name=model_name, agent_name="tissue_ontology")
+    model = set_model(model_name=model_name, agent_name="tissue_ontology", service_tier=service_tier)
 
     # set tools
     tools = [
@@ -87,9 +88,19 @@ def create_tissue_ontology_workflow(
         """
         try:
             # The React agent expects messages in this format
-            response = await agent.ainvoke({"messages" : messages}, config=config)
-            # filter out ids that do not start with "UBERON:"
-            ids = [x.id for x in response['structured_response'].ids if x.id.startswith("UBERON:")]
+            response = await agent.ainvoke({"tissue_description" : messages[0].content}, config=config)
+            # Extract the Uberon ID from the response
+            content = response['messages'][0].content
+            if "UBERON:" in content:
+                # 提取UBERON:XXXXXXX格式的ID
+                import re
+                uberon_ids = re.findall(r'UBERON:\d+', content)
+                if uberon_ids:
+                    ids = uberon_ids
+                else:
+                    ids = []
+            else:
+                ids = []
             return ids
         except OpenAIRefusalError as e:
             # Handle cases where the model refuses to generate a response

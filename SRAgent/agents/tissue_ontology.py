@@ -23,9 +23,10 @@ class UBERON_ID(BaseModel):
 def create_tissue_ontology_agent(
     model_name: Optional[str]=None,
     return_tool: bool=True,
+    service_tier: Optional[str]=None,
 ) -> Callable:
     # create model
-    model = set_model(model_name=model_name, agent_name="tissue_ontology")
+    model = set_model(model_name=model_name, agent_name="tissue_ontology", service_tier=service_tier)
 
     # set tools
     tools = [

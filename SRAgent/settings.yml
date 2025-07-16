@@ -1,7 +1,21 @@
+moonshot:
+  db_name: "sragent-test"
+  models:
+    default: "moonshot-v1-8k"
+    sragent: "moonshot-v1-8k"
+  temperature:
+    default: 0.1
+    sragent: 0.1
+  reasoning_effort:
+    default: "medium"
+    sragent: "medium"
+  service_tier:
+    default: "default"
 default:
-  db_host: "35.243.133.29"
+  db_host: "10.28.1.24"
   db_port: 5432
-  db_user: "postgres"
+  db_user: "yanglab"
+  db_password: "labyang"
   db_timeout: 30
   service_tier: "standard"
   flex_timeout: 180

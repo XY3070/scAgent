@@ -1,5 +1,6 @@
 # import
 ## batteries
+import os
 import asyncio
 from typing import Annotated, Any, Callable, Optional
 ## 3rd party
@@ -22,6 +23,17 @@ def create_bigquery_agent(model_name: Optional[str]=None) -> Callable:
     Returns:
         Configured agent instance
     """
+
+    # ---------- 新增判断 ----------
+    if not os.getenv("GOOGLE_APPLICATION_CREDENTIALS"):
+        print("⚠️  跳过 BigQuery Agent（环境变量 GOOGLE_APPLICATION_CREDENTIALS 未设置）")
+        # 返回一个“什么都不做”的异步工具
+        from langchain_core.messages import AIMessage
+        async def stub_agent(message: str) -> dict:
+            return {"messages": [AIMessage(content="BigQuery 未启用，跳过查询")]}
+        return stub_agent
+    # ---------- 原有逻辑继续 ----------
+
     # create model
     model = set_model(model_name=model_name, agent_name="bigquery")
 
