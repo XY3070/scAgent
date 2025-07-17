@@ -14,6 +14,9 @@ from SRAgent.cli.metadata import metadata_agent_parser, metadata_agent_main
 from SRAgent.cli.srx_info import SRX_info_agent_parser, SRX_info_agent_main
 from SRAgent.cli.find_datasets import find_datasets_parser, find_datasets_main
 from SRAgent.cli.tissue_ontology import tissue_ontology_parser, tissue_ontology_main
+from SRAgent.db.connect import db_connect
+from SRAgent.db.create import create_srx_metadata, create_srx_srr
+import psycopg2
 
 
 # functions
@@ -68,8 +71,17 @@ def main():
     load_dotenv(override=True)
     # parsing args
     args = arg_parse()
-    
-    # which subcommand
+
+    # Create tables if they don't exist
+    try:
+        with db_connect() as conn:
+            create_srx_metadata(conn)
+            create_srx_srr(conn)
+
+    except Exception as e:
+         print(f"Error connecting to database or creating tables: {e}")
+         sys.exit(1)
+     # which subcommand
     if not args.command:
         print("Provide a subcommand or use -h/--help for help")
         sys.exit(0)

@@ -84,4 +84,4 @@ if __name__ == '__main__':
         "srx_accession" : ["SRX18216984"],
     })
     with db_connect() as conn:
-        db_upsert(df, "srx_metadata", conn)    
+        db_upsert(df, "srx_metadata", conn)

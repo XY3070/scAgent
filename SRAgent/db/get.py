@@ -50,46 +50,57 @@ def db_get_srx_records(conn: connection, column: str="entrez_id", database: str=
     # Fetch the results and return a list of {target_column} values
     return [row[0] for row in execute_query(stmt, conn)]
 
-def db_get_unprocessed_records(
-    conn: connection, database: str="sra", max_srx: int=3
+def db_get_filtered_srx_metadata(
+    conn: connection, 
+    organism: str = None,
+    is_single_cell: str = None,
+    limit: int = 100,
+    database: str="sra"
     ) -> pd.DataFrame:
     """
-    Get all suitable unprocessed SRX records, limiting by unique srx_accession values.
+    Get filtered SRX metadata records from the database.
     Args:
         conn: Connection to the database.
+        organism: Organism to filter by (e.g., "Homo sapiens").
+        is_single_cell: Filter by single cell status ("yes" or "no").
+        limit: Maximum number of records to return.
         database: Name of the database to query.
-        max_srx: Maximum number of SRX records to return.
     Returns:
-        dataframe of unprocessed SRX records.
+        dataframe of filtered SRX metadata records.
     """
     srx_metadata = Table("srx_metadata")
-    srx_srr = Table("srx_srr")
 
-    subquery = Query \
-        .from_(srx_metadata) \
-        .select(srx_metadata.srx_accession) \
-        .where(Criterion.all([
-            srx_metadata.database == database,
-            srx_metadata.is_illumina == "yes",
-            srx_metadata.is_single_cell == "yes",
-            srx_metadata.is_paired_end == "yes",
-            ~srx_metadata.tech_10x.isin(["other", "not_applicable"])
-        ])) \
-        .distinct() \
-        .limit(max_srx)
+    criteria = [srx_metadata.database == database]
+    if organism:
+        criteria.append(srx_metadata.organism == organism)
+    if is_single_cell:
+        criteria.append(srx_metadata.is_single_cell == is_single_cell)
 
     stmt = Query \
         .from_(srx_metadata) \
-        .inner_join(srx_srr) \
-        .on(srx_metadata.srx_accession == srx_srr.srx_accession) \
-        .where(srx_metadata.srx_accession.isin(subquery)) \
         .select(
-            srx_metadata.srx_accession.as_("sample"),
-            srx_srr.srr_accession.as_("accession"),
-            srx_metadata.entrez_id.as_("entrez_id"),
-            srx_metadata.tech_10x.as_("tech_10x"),
-            srx_metadata.organism.as_("organism")
-        )
+            srx_metadata.srx_accession,
+            srx_metadata.entrez_id,
+            srx_metadata.organism,
+            srx_metadata.is_single_cell,
+            srx_metadata.tech_10x,
+            srx_metadata.library_strategy,
+            srx_metadata.library_source,
+            srx_metadata.library_selection,
+            srx_metadata.platform,
+            srx_metadata.instrument_model,
+            srx_metadata.sra_study_accession,
+            srx_metadata.bioproject_accession,
+            srx_metadata.biosample_accession,
+            srx_metadata.pubmed_id,
+            srx_metadata.title,
+            srx_metadata.design_description,
+            srx_metadata.sample_description,
+            srx_metadata.submission_date,
+            srx_metadata.update_date
+        ) \
+        .where(Criterion.all(criteria)) \
+        .limit(limit)
         
     # fetch as pandas dataframe
     return pd.read_sql(str(stmt), conn)
@@ -179,5 +190,14 @@ if __name__ == "__main__":
 
         #print(db_get_srx_records(conn))
         #print(db_get_unprocessed_records(conn))
-        print(len(db_get_srx_accessions(conn)))
+        #print(len(db_get_srx_accessions(conn)))
         #print(db_find_srx(["SRX19162973"], conn))
+        
+        # Example usage for the new function
+        # metadata = db_get_filtered_srx_metadata(
+        #     conn,
+        #     organism="Homo sapiens",
+        #     is_single_cell="yes",
+        #     limit=100
+        # )
+        # print(metadata)

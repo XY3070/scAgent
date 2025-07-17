@@ -14,6 +14,7 @@ from SRAgent.cli.utils import CustomFormatter
 from SRAgent.workflows.metadata import get_metadata_items, create_metadata_graph
 from SRAgent.workflows.graph_utils import handle_write_graph_option
 from SRAgent.agents.display import create_step_summary_chain
+from SRAgent.db.get import db_get_unprocessed_records
 
 # functions
 def metadata_agent_parser(subparsers):
@@ -25,9 +26,13 @@ def metadata_agent_parser(subparsers):
     )
     sub_parser.set_defaults(func=metadata_agent_main)
     sub_parser.add_argument(
-        'srx_accession_csv', type=str, 
-        help='CSV of entrez_id,srx_accession. Headers required'
+        'srx_accession_csv', type=str, nargs='?', default=None,
+        help='CSV of entrez_id,srx_accession. Headers required. Optional when --from-db is used'
     )    
+    sub_parser.add_argument(
+        '--from-db', action='store_true', default=False,
+        help='Get SRX accessions from database instead of CSV file'
+    )
     sub_parser.add_argument(
         '--database', type=str, default='sra', choices=['gds', 'sra'], 
         help='Entrez database origin of the Entrez IDs'
@@ -61,6 +66,14 @@ def metadata_agent_parser(subparsers):
     sub_parser.add_argument(
         '--output-csv', type=str, default=None,
         help='Path to save the metadata as a CSV file'
+    )
+    sub_parser.add_argument(
+        '--limit', type=int, default=None,
+        help='Limit the number of SRX accessions to process'
+    )
+    sub_parser.add_argument(
+        '--filter-by', type=str, action='append', default=[],
+        help='Filter results by key=value pairs (e.g., organism=Homo sapiens). Can be specified multiple times.'
     )
     sub_parser.add_argument(
         '--no-summaries', action='store_true', default=False,
@@ -182,7 +195,22 @@ async def _metadata_agent_main(args):
     }
 
     # read in entrez_id and srx_accession
-    entrez_srx = pd.read_csv(args.srx_accession_csv, comment="#").to_records(index=False)
+    if args.from_db:
+        from SRAgent.db.connect import db_connect
+        with db_connect() as conn:
+            entrez_srx = db_get_unprocessed_records(conn)
+            if not entrez_srx:
+                print("No unprocessed records found in the database.")
+                return
+    elif args.srx_accession_csv:
+        entrez_srx = pd.read_csv(args.srx_accession_csv, comment="#").to_records(index=False)
+    else:
+        print("Error: Either --from-db or srx_accession_csv must be provided.")
+        return
+
+    # Apply limit if specified
+    if args.limit is not None:
+        entrez_srx = entrez_srx[:args.limit]
 
     # Create semaphore to limit concurrent processing
     semaphore = asyncio.Semaphore(args.max_parallel)
@@ -198,25 +226,35 @@ async def _metadata_agent_main(args):
                 args.no_summaries
             )
 
-    # Create tasks for each entrez_id
-    tasks = [_process_with_semaphore(x) for x in entrez_srx]
-    
-    # Run tasks concurrently with limited concurrency
-    results = await asyncio.gather(*tasks)
+    # Process all SRX accessions concurrently
+    raw_results = await asyncio.gather(*[_process_with_semaphore(esrx) for esrx in entrez_srx])
+    valid_results = [res for res in raw_results if res is not None]
 
-    # Filter out None results and create DataFrame
-    valid_results = [r for r in results if r is not None]
-
-    if valid_results:
-        df = pd.DataFrame(valid_results)
-        print("\n--- Collected Metadata ---")
-        print(df.to_string())
-
-        if args.output_csv:
-            df.to_csv(args.output_csv, index=False)
-            print(f"\nMetadata saved to {args.output_csv}")
-    else:
+    if not valid_results:
         print("No metadata collected.")
+        return
+
+    # Convert to DataFrame
+    df = pd.DataFrame(valid_results)
+
+    # Apply filters if specified
+    for filter_str in args.filter_by:
+        try:
+            key, value = filter_str.split('=', 1)
+            if key in df.columns:
+                df = df[df[key].astype(str) == value] # Convert column to string for comparison
+            else:
+                print(f"Warning: Filter key '{key}' not found in metadata. Skipping filter.")
+        except ValueError:
+            print(f"Warning: Invalid filter format '{filter_str}'. Expected 'key=value'. Skipping filter.")
+
+    # Output results
+    if args.output_csv:
+        df.to_csv(args.output_csv, index=False)
+        print(f"Metadata successfully saved to {args.output_csv}")
+    else:
+        print("\nCollected Metadata:")
+        print(df.to_markdown(index=False))
 
 def metadata_agent_main(args):
     asyncio.run(_metadata_agent_main(args))

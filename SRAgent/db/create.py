@@ -30,7 +30,7 @@ $$ LANGUAGE plpgsql;
 CREATE TRIGGER set_updated_at
 BEFORE UPDATE ON {tbl_name}
 FOR EACH ROW
-EXECUTE FUNCTION update_updated_at_column();
+EXECUTE PROCEDURE update_updated_at_column();
     """
 
     # Execute the SQL statements
@@ -59,6 +59,20 @@ def create_srx_metadata(conn: connection) -> None:
             Column("disease", "VARCHAR(300)"),
             Column("perturbation", "VARCHAR(300)"),
             Column("cell_line", "VARCHAR(300)"),
+            Column("library_strategy", "VARCHAR(50)"),
+            Column("library_source", "VARCHAR(50)"),
+            Column("library_selection", "VARCHAR(50)"),
+            Column("platform", "VARCHAR(50)"),
+            Column("instrument_model", "VARCHAR(100)"),
+            Column("sra_study_accession", "VARCHAR(20)"),
+            Column("bioproject_accession", "VARCHAR(20)"),
+            Column("biosample_accession", "VARCHAR(20)"),
+            Column("pubmed_id", "VARCHAR(20)"),
+            Column("title", "TEXT"),
+            Column("design_description", "TEXT"),
+            Column("sample_description", "TEXT"),
+            Column("submission_date", "TIMESTAMP"),
+            Column("update_date", "TIMESTAMP"),
             Column("czi_collection_id", "VARCHAR(40)"),
             Column("czi_collection_name", "VARCHAR(300)"),
             Column("notes", "TEXT"),
@@ -194,32 +208,28 @@ def create_screcounter_trace(conn: connection) -> None:
     stmt = Query \
         .create_table(tbl_name) \
         .columns(
-            Column("task_id", "INT", nullable=False),
+            Column("task_id", "VARCHAR(20)", nullable=False),
             Column("hash", "VARCHAR(12)", nullable=False),
             Column("native_id", "VARCHAR(80)", nullable=False),
             Column("name", "VARCHAR(255)"),
-            Column("status", "VARCHAR(24)"),
+            Column("queue", "VARCHAR(40)"),
+            Column("status", "VARCHAR(40)"),
             Column("exit", "VARCHAR(10)"),
-            Column("submit", "VARCHAR(24)"),
+            Column("submit", "VARCHAR(40)"),
             Column("container", "VARCHAR(255)"),
             Column("cpus", "INT"),
-            Column("time", "VARCHAR(24)"),
-            Column("disk", "VARCHAR(24)"),
-            Column("memory", "VARCHAR(24)"),
-            Column("attempt", "INT"),
-            Column("duration", "VARCHAR(24)"),
-            Column("realtime", "VARCHAR(24)"),
-            Column("cpu_percent", "VARCHAR(24)"), 
-            Column("peak_rss", "VARCHAR(24)"),
-            Column("peak_vmem", "VARCHAR(24)"),
-            Column("rchar", "VARCHAR(24)"),
-            Column("wchar", "VARCHAR(24)"),
-            Column("workdir", "VARCHAR(255)"),
-            Column("scratch", "VARCHAR(24)"),
+            Column("memory", "VARCHAR(20)"),
+            Column("disk", "VARCHAR(20)"),
+            Column("time", "VARCHAR(20)"),
+            Column("duration", "VARCHAR(20)"),
+            Column("attempts", "INT"),
+            Column("script", "TEXT"),
+            Column("error_action", "TEXT"),
+            Column("error_stack", "TEXT"),
             Column("created_at", "TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP"),
             Column("updated_at", "TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP"),
         ) \
-        .unique("hash", "native_id")
+        .unique("task_id")
     execute_query(stmt, conn)
     create_updated_at_trigger(tbl_name, conn)
 

@@ -111,7 +111,9 @@ def execute_query(stmt, conn: connection) -> Optional[List[Tuple]]:
                 conn.commit()  # Commit only for data-modifying queries
                 return None
     except psycopg2.errors.DuplicateTable as e:
-        print(f"Table already exists: {e}")
+        # This error occurs when CREATE TABLE is executed without IF NOT EXISTS
+        # and the table already exists. We can safely ignore it.
+        pass
         return None
     except psycopg2.ProgrammingError as e:
         print(f"SQL Programming Error: {e}")

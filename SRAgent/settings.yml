@@ -1,5 +1,5 @@
 moonshot:
-  db_name: "sragent-test"
+  db_name: "scagent"
   models:
     default: "Qwen3-235B-A22B"
     sragent: "Qwen3-235B-A22B"
@@ -23,7 +23,7 @@ default:
   qwen_api_key: "dummy-key"
 
 test:
-  db_name: "sragent-test"
+  db_name: "scagent"
   models:
     default: "Qwen3-235B-A22B"
     esearch: "Qwen3-235B-A22B"
@@ -108,7 +108,7 @@ test:
   qwen_api_key: "dummy-key"
     
 prod:
-  db_name: "sragent-prod"
+  db_name: "scagent"
   models:
     default: "Qwen3-235B-A22B"
     esearch: "Qwen3-235B-A22B"
@@ -191,7 +191,7 @@ prod:
     get_entrez_ids: "default"
   
 claude:
-  db_name: "sragent-test"
+  db_name: "scagent"
   models:
     default: "Qwen3-235B-A22B"
   temperature:
