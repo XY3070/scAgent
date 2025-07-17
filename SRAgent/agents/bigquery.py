@@ -30,6 +30,10 @@ def create_bigquery_agent(model_name: Optional[str]=None) -> Callable:
         # 返回一个“什么都不做”的异步工具
         from langchain_core.messages import AIMessage
         async def stub_agent(message: str) -> dict:
+            """
+            Stub agent for BigQuery when GOOGLE_APPLICATION_CREDENTIALS is not set.
+            It returns a message indicating BigQuery is skipped.
+            """
             return {"messages": [AIMessage(content="BigQuery 未启用，跳过查询")]}
         return stub_agent
     # ---------- 原有逻辑继续 ----------

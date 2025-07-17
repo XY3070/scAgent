@@ -22,10 +22,7 @@ def load_settings() -> Dict[str, Any]:
         Dictionary containing settings for the specified environment
     """
     # get path to settings
-    if os.getenv("DYNACONF_SETTINGS_PATH"):
-        s_path = os.getenv("DYNACONF_SETTINGS_PATH")
-    else:
-        s_path = str(resources.files("SRAgent").joinpath("settings.yml"))
+    s_path = str(resources.files("SRAgent").joinpath("settings.yml"))
     if not os.path.exists(s_path):
         raise FileNotFoundError(f"Settings file not found: {s_path}")
     settings = Dynaconf(
@@ -52,7 +49,7 @@ def async_retry_on_flex_timeout(func):
         try:
             # Try with flex tier first
             return await func(self, *args, **kwargs)
-        except (asyncio.TimeoutError, openai.APITimeoutError) as e:
+        except (asyncio.TimeoutError, openai.APITimeoutError, openai.APIConnectionError) as e:
             print(f"Flex tier timeout for model {model_name}, retrying with standard tier...", file=sys.stderr)
             
             # Create a new instance with default tier
@@ -97,7 +94,7 @@ def sync_retry_on_flex_timeout(func):
         try:
             # Try with flex tier first
             return func(self, *args, **kwargs)
-        except (openai.APITimeoutError,) as e:
+        except (openai.APITimeoutError, openai.APIConnectionError) as e:
             print(f"Flex tier timeout for model {model_name}, retrying with standard tier...", file=sys.stderr)
             
             # Create a new instance with default tier
@@ -129,8 +126,8 @@ class FlexTierChatOpenAI(ChatOpenAI):
     """
     Extended ChatOpenAI that supports automatic fallback from flex to default tier.
     """
-    def __init__(self, *args, service_tier: Optional[str] = None, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, *args, service_tier: Optional[str] = None, openai_api_base: Optional[str] = None, openai_api_key: Optional[str] = None, **kwargs):
+        super().__init__(*args, openai_api_base=openai_api_base, openai_api_key=openai_api_key, **kwargs)
         self._service_tier = service_tier
         
         # Create fallback model if using flex tier
@@ -138,7 +135,7 @@ class FlexTierChatOpenAI(ChatOpenAI):
             fallback_kwargs = kwargs.copy()
             fallback_kwargs.pop('service_tier', None)
             fallback_kwargs.pop('timeout', None)
-            self._fallback_model = ChatOpenAI(**fallback_kwargs)
+            self._fallback_model = ChatOpenAI(openai_api_base=openai_api_base, openai_api_key=openai_api_key, **fallback_kwargs)
     
     @async_retry_on_flex_timeout
     async def ainvoke(self, *args, **kwargs):
@@ -259,7 +256,9 @@ def set_model(
             reasoning_effort=None, 
             max_tokens=max_tokens, 
             service_tier=service_tier,
-            timeout=timeout if service_tier == "flex" else None
+            timeout=timeout if service_tier == "flex" else None,
+            openai_api_base=settings.get("qwen_api_base"),
+            openai_api_key=settings.get("qwen_api_key")
         )
     elif re.search(r"^o[0-9]", model_name):
         # o[0-9] models use reasoning_effort but not temperature
@@ -270,7 +269,9 @@ def set_model(
             reasoning_effort=reasoning_effort, 
             max_tokens=max_tokens, 
             service_tier=service_tier,
-            timeout=timeout if service_tier == "flex" else None
+            timeout=timeout if service_tier == "flex" else None,
+            openai_api_base=settings.get("qwen_api_base"),
+            openai_api_key=settings.get("qwen_api_key")
         )
     elif model_name.startswith("Qwen"):
         # 使用OpenAI兼容接口调用本地部署的QWEN模型
@@ -283,8 +284,8 @@ def set_model(
             
         model = ChatOpenAI(
             model_name=model_name,
-            openai_api_base="http://10.28.1.21:30080/v1",
-            openai_api_key="dummy-key",  # API不需要真实的key，但需要提供一个值
+            openai_api_base=settings["qwen_api_base"],
+            openai_api_key=settings["qwen_api_key"],
             temperature=temperature,
             max_tokens=max_tokens,
             top_p=0.8,
@@ -293,15 +294,18 @@ def set_model(
         )
     elif model_name.startswith("moonshot") or model_name.startswith("kimi"):
         # 推荐做法：用 OpenAI SDK 兼容方式调用 Moonshot/Kimi K2
-        api_key = os.getenv("MOONSHOT_API_KEY")
-        if not api_key:
-            raise ValueError("MOONSHOT_API_KEY environment variable not set")
+        # api_key = os.getenv("MOONSHOT_API_KEY")
+        # if not api_key:
+        #     raise ValueError("MOONSHOT_API_KEY environment variable not set")
         model = ChatOpenAI(
             model_name=model_name,
-            openai_api_base="https://api.moonshot.cn/v1",
-            openai_api_key=api_key,
+            openai_api_base=settings["qwen_api_base"],
+            openai_api_key=settings["qwen_api_key"],
             temperature=temperature,
-            max_tokens=max_tokens
+            max_tokens=max_tokens,
+            top_p=0.8,
+            presence_penalty=1.5,
+            default_headers=default_headers
         )
     else:
         raise ValueError(f"Model {model_name} not supported")
