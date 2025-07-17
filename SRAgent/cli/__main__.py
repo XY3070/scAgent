@@ -77,6 +77,7 @@ def main():
         with db_connect() as conn:
             create_srx_metadata(conn)
             create_srx_srr(conn)
+            conn.commit()
 
     except Exception as e:
          print(f"Error connecting to database or creating tables: {e}")

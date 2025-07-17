@@ -1,6 +1,5 @@
 # import
 ## batteries
-import os
 import sys
 import asyncio
 import argparse
@@ -15,6 +14,7 @@ from SRAgent.workflows.metadata import get_metadata_items, create_metadata_graph
 from SRAgent.workflows.graph_utils import handle_write_graph_option
 from SRAgent.agents.display import create_step_summary_chain
 from SRAgent.db.get import db_get_unprocessed_records
+
 
 # functions
 def metadata_agent_parser(subparsers):
@@ -54,11 +54,7 @@ def metadata_agent_parser(subparsers):
         '--use-database', action='store_true', default=False, 
         help='Add the results to the scBaseCount SQL database'
     )
-    sub_parser.add_argument(
-        '--tenant', type=str, default='prod',
-        choices=['prod', 'test'],
-        help='Tenant name for the SRAgent SQL database'
-    )
+
     sub_parser.add_argument(
         '--write-graph', type=str, metavar='FILE', default=None,
         help='Write the workflow graph to a file and exit (supports .png, .svg, .pdf, .mermaid formats)'
@@ -167,97 +163,184 @@ async def _metadata_agent_main(args):
     """
     Main function for invoking the metadata agent
     """
-    # set tenant
-    if args.tenant:
-        os.environ["DYNACONF"] = args.tenant
+    try:
+        print(f"Parsed arguments: {args}")
+        
+        # handle write-graph option
+        if args.write_graph:
+            handle_write_graph_option(create_metadata_graph, args.write_graph)
+            return
 
-    # set email and api key
-    Entrez.email = os.getenv("EMAIL")
-    Entrez.api_key = os.getenv("NCBI_API_KEY")
-    
-    # handle write-graph option
-    if args.write_graph:
-        handle_write_graph_option(create_metadata_graph, args.write_graph)
-        return
+        # create supervisor agent
+        graph = create_metadata_graph()
+        step_summary_chain = create_step_summary_chain()
 
-    # create supervisor agent
-    graph = create_metadata_graph()
-    step_summary_chain = create_step_summary_chain()
-
-    # invoke agent
-    config = {
-        "max_concurrency": args.max_concurrency,
-        "recursion_limit": args.recursion_limit,
-        "configurable": {
-            "use_database": args.use_database,
-            "no_srr": args.no_srr
+        # invoke agent
+        config = {
+            "max_concurrency": args.max_concurrency,
+            "recursion_limit": args.recursion_limit,
+            "configurable": {
+                "use_database": args.use_database,
+                "no_srr": args.no_srr
+            }
         }
-    }
 
-    # read in entrez_id and srx_accession
-    if args.from_db:
-        from SRAgent.db.connect import db_connect
-        with db_connect() as conn:
-            entrez_srx = db_get_unprocessed_records(conn)
-            if not entrez_srx:
-                print("No unprocessed records found in the database.")
-                return
-    elif args.srx_accession_csv:
-        entrez_srx = pd.read_csv(args.srx_accession_csv, comment="#").to_records(index=False)
-    else:
-        print("Error: Either --from-db or srx_accession_csv must be provided.")
-        return
+        # read in entrez_id and srx_accession
+        if args.from_db:
+            from SRAgent.db.connect import db_connect
+            from SRAgent.db.get import db_get_unprocessed_records, db_get_filtered_srx_metadata
+            with db_connect() as conn:
+                filters = {}
+                for f in args.filter_by:
+                    key, value = f.split('=', 1)
+                    filters[key] = value
 
-    # Apply limit if specified
-    if args.limit is not None:
-        entrez_srx = entrez_srx[:args.limit]
+                # If filters are provided, use db_get_filtered_srx_metadata
+                if filters:
+                    records_df = db_get_filtered_srx_metadata(
+                        conn=conn,
+                        organism=filters.get('organism'),
+                        is_single_cell=filters.get('is_single_cell'),
+                        limit=args.limit,
+                        database=args.database
+                    )
+                    entrez_srx_accessions = list(records_df[['entrez_id', 'srx_accession']].itertuples(index=False, name=None))
+                else:
+                    entrez_srx_accessions = db_get_unprocessed_records(conn, database=args.database)
+                    # convert to list of tuples
+                    entrez_srx_accessions = [(x, None) for x in entrez_srx_accessions]
 
-    # Create semaphore to limit concurrent processing
-    semaphore = asyncio.Semaphore(args.max_parallel)
+                print(f"Retrieved records from DB: {entrez_srx_accessions}")
+                if not entrez_srx_accessions:
+                    print("No unprocessed records found in the database.")
+                    return
+                print("Reached end of db_connect block.")
+        else:
+            if not args.srx_accession_csv:
+                raise ValueError("Either --from-db or srx_accession_csv must be provided.")
+            # read in the entrez_id and srx_accession
+            df_csv = pd.read_csv(args.srx_accession_csv)
+            entrez_srx_accessions = list(df_csv[['entrez_id', 'srx_accession']].itertuples(index=False, name=None))
 
-    async def _process_with_semaphore(entrez_id):
-        async with semaphore:
-            return await _process_single_srx(
-                entrez_id,
-                args.database,
-                graph,
-                step_summary_chain,
-                config,
-                args.no_summaries
-            )
+        # limit the number of SRX accessions to process
+        if args.limit:
+            entrez_srx_accessions = entrez_srx_accessions[:args.limit]
 
-    # Process all SRX accessions concurrently
-    raw_results = await asyncio.gather(*[_process_with_semaphore(esrx) for esrx in entrez_srx])
-    valid_results = [res for res in raw_results if res is not None]
+        # Create semaphore to limit concurrent processing
+        semaphore = asyncio.Semaphore(args.max_parallel)
 
-    if not valid_results:
-        print("No metadata collected.")
-        return
+        async def _process_with_semaphore(entrez_srx):
+            async with semaphore:
+                return await _process_single_srx(
+                    entrez_srx,
+                    args.database,
+                    graph,
+                    step_summary_chain,
+                    config,
+                    args.no_summaries
+                )
 
-    # Convert to DataFrame
-    df = pd.DataFrame(valid_results)
+        # Process all SRX accessions concurrently
+        raw_results = await asyncio.gather(*[_process_with_semaphore(esrx) for esrx in entrez_srx_accessions])
+        valid_results = [res for res in raw_results if res is not None]
 
-    # Apply filters if specified
-    for filter_str in args.filter_by:
-        try:
-            key, value = filter_str.split('=', 1)
-            if key in df.columns:
-                df = df[df[key].astype(str) == value] # Convert column to string for comparison
-            else:
-                print(f"Warning: Filter key '{key}' not found in metadata. Skipping filter.")
-        except ValueError:
-            print(f"Warning: Invalid filter format '{filter_str}'. Expected 'key=value'. Skipping filter.")
+        if not valid_results:
+            print("No metadata collected.")
+            return
 
-    # Output results
-    if args.output_csv:
-        df.to_csv(args.output_csv, index=False)
-        print(f"Metadata successfully saved to {args.output_csv}")
-    else:
-        print("\nCollected Metadata:")
-        print(df.to_markdown(index=False))
+        all_srr_accessions = []
+        for item in valid_results:
+            if item.get("SRR"):
+                srx_acc = item.get("SRX")
+                srr_list = [s.strip() for s in item["SRR"].split(", ") if s.strip()]
+                for srr in srr_list:
+                    all_srr_accessions.append({"srx_accession": srx_acc, "srr_accession": srr})
+
+        # Convert to DataFrame
+        df = pd.DataFrame(valid_results)
+
+        # Apply filters if provided (only for CSV input, DB filters handled by db_get_filtered_srx_metadata)
+        if not args.from_db and args.filter_by:
+            for filter_str in args.filter_by:
+                try:
+                    key, value = filter_str.split('=', 1)
+                    if key in df.columns:
+                        df = df[df[key].astype(str) == value] # Convert column to string for comparison
+                    else:
+                        print(f"Warning: Filter key '{key}' not found in metadata. Skipping filter.")
+                except ValueError:
+                    print(f"Warning: Invalid filter format '{filter_str}'. Expected 'key=value'. Skipping filter.")
+
+        # Output results
+        if args.output_csv:
+            df.to_csv(args.output_csv, index=False)
+            print(f"Metadata saved to {args.output_csv}")
+        else:
+            print("\nCollected Metadata:")
+            print(df.to_markdown(index=False))
+
+        # Add to database
+        if args.use_database:
+            from SRAgent.db.upsert import db_upsert
+            from SRAgent.db.utils import get_unique_columns
+            with db_connect() as conn:
+                # Upsert srx_metadata
+                print(f"metadata_df shape: {df.drop(columns=['SRR']).shape}")
+                print(f"metadata_df head:\n{df.drop(columns=['SRR']).head().to_string()}")
+                db_upsert(df.drop(columns=["SRR"]), "srx_metadata", conn)
+                print("SRX metadata upserted to database.")
+
+                # Upsert srx_srr if --no-srr is not set
+                if not args.no_srr and all_srr_accessions:
+                    srr_df = pd.DataFrame(all_srr_accessions)
+                    db_upsert(srr_df, "srx_srr", conn)
+                    print("SRR accessions upserted to database.")
+
+
+            try:
+                key, value = filter_str.split('=', 1)
+                if key in df.columns:
+                    df = df[df[key].astype(str) == value] # Convert column to string for comparison
+                else:
+                    print(f"Warning: Filter key '{key}' not found in metadata. Skipping filter.")
+            except ValueError:
+                print(f"Warning: Invalid filter format '{filter_str}'. Expected 'key=value'. Skipping filter.")
+
+        # Output results
+        if args.output_csv:
+            df.to_csv(args.output_csv, index=False)
+            print(f"Metadata successfully saved to {args.output_csv}")
+        else:
+            print("\nCollected Metadata:")
+            print(df.to_markdown(index=False))
+
+        # Add to database
+        if args.use_database:
+            from SRAgent.db.connect import db_connect
+            from SRAgent.db.upsert import db_upsert
+            from SRAgent.db.utils import get_unique_columns
+            with db_connect() as conn:
+                # Upsert srx_metadata
+                unique_cols_metadata = get_unique_columns("srx_metadata", conn)
+                print(f"Unique columns for srx_metadata: {unique_cols_metadata}")
+                db_upsert(df.drop(columns=["SRR"]), "srx_metadata", conn)
+                print("SRX metadata upserted to database.")
+
+                # Upsert srx_srr if --no-srr is not set
+                if not args.no_srr and all_srr_accessions:
+                    srr_df = pd.DataFrame(all_srr_accessions)
+                    unique_cols_srr = get_unique_columns("srx_srr", conn)
+                    print(f"Unique columns for srr_srr: {unique_cols_srr}")
+                    db_upsert(srr_df, "srx_srr", conn)
+                    print("SRR accessions upserted to database.")
+
+    except Exception as e:
+        print(f"An error occurred: {e}")
 
 def metadata_agent_main(args):
+    print("Calling _metadata_agent_main...")
     asyncio.run(_metadata_agent_main(args))
+    print("_metadata_agent_main call finished.")
 
 # main
 if __name__ == '__main__':

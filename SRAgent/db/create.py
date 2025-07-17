@@ -27,20 +27,24 @@ $$ LANGUAGE plpgsql;
     """
 
     trigger_sql = f"""
+DROP TRIGGER IF EXISTS set_updated_at ON {tbl_name};
 CREATE TRIGGER set_updated_at
 BEFORE UPDATE ON {tbl_name}
 FOR EACH ROW
 EXECUTE PROCEDURE update_updated_at_column();
+    
     """
 
     # Execute the SQL statements
     with conn.cursor() as cur:
         cur.execute(trigger_function_sql)
         cur.execute(trigger_sql)
-        conn.commit()
 
 def create_srx_metadata(conn: connection) -> None:
     tbl_name = "srx_metadata"
+    # Drop table if it exists
+    with conn.cursor() as cur:
+        cur.execute(f"DROP TABLE IF EXISTS {tbl_name} CASCADE;")
     stmt = Query \
         .create_table(tbl_name) \
         .columns(
@@ -86,6 +90,9 @@ def create_srx_metadata(conn: connection) -> None:
 
 def create_srx_srr(conn: connection) -> None:
     tbl_name = "srx_srr"
+    # Drop table if it exists
+    with conn.cursor() as cur:
+        cur.execute(f"DROP TABLE IF EXISTS {tbl_name} CASCADE;")
     stmt = Query \
         .create_table(tbl_name) \
         .columns(

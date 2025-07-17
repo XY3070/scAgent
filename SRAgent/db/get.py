@@ -50,6 +50,33 @@ def db_get_srx_records(conn: connection, column: str="entrez_id", database: str=
     # Fetch the results and return a list of {target_column} values
     return [row[0] for row in execute_query(stmt, conn)]
 
+def db_get_unprocessed_records(conn: connection, database: str="sra") -> List[int]:
+    """
+    Get the entrez_id values of SRX records that have not been processed.
+    Args:
+        conn: Connection to the database.
+        database: Name of the database to query.
+    Returns:
+        List of entrez_id values of SRX records that have not been processed.
+    """
+    srx_metadata = Table("srx_metadata")
+    srx_srr = Table("srx_srr")
+    stmt = Query \
+        .from_(srx_metadata) \
+        .left_join(srx_srr) \
+        .on(srx_metadata.srx_accession == srx_srr.srx_accession) \
+        .select(srx_metadata.entrez_id) \
+        .distinct() \
+        .where(
+            Criterion.all([
+                srx_metadata.database == database,
+                srx_srr.srr_accession.isnull()
+            ])
+        )
+        
+    # Fetch the results and return a list of entrez_id values
+    return [row[0] for row in execute_query(stmt, conn)]
+
 def db_get_filtered_srx_metadata(
     conn: connection, 
     organism: str = None,
@@ -171,12 +198,27 @@ def db_get_eval(conn: connection, dataset_ids: List[str]) -> pd.DataFrame:
     tbl = Table("eval")
     stmt = Query \
         .from_(tbl) \
-        .select(target_column) \
+        .select(tbl.dataset_id) \
         .distinct() \
         .where(tbl.dataset_id.isin(dataset_ids))
         
     # Fetch the results and return a list of {target_column} values
     return [row[0] for row in execute_query(stmt, conn)]
+
+def db_get_table_data(conn: connection, table_name: str) -> pd.DataFrame:
+    """
+    Get all data from a specified table.
+    Args:
+        conn: Connection to the database.
+        table_name: The name of the table to query.
+    Returns:
+        DataFrame containing all data from the specified table.
+    """
+    tbl = Table(table_name)
+    stmt = Query \
+        .from_(tbl) \
+        .select("*")
+    return pd.read_sql(str(stmt), conn)
 
 # main
 if __name__ == "__main__":
@@ -185,19 +227,19 @@ if __name__ == "__main__":
     from SRAgent.db.connect import db_connect
     
     os.environ["DYNACONF"] = "test"
-    with db_connect() as conn:
-        #print(db_get_eval(conn, ["eval1"]))
+    # with db_connect() as conn:
+    #     print(db_get_eval(conn, ["eval1"]))
 
-        #print(db_get_srx_records(conn))
-        #print(db_get_unprocessed_records(conn))
-        #print(len(db_get_srx_accessions(conn)))
-        #print(db_find_srx(["SRX19162973"], conn))
+    #     print(db_get_srx_records(conn))
+    #     print(db_get_unprocessed_records(conn))
+    #     print(len(db_get_srx_accessions(conn)))
+    #     print(db_find_srx(["SRX19162973"], conn))
         
-        # Example usage for the new function
-        # metadata = db_get_filtered_srx_metadata(
-        #     conn,
-        #     organism="Homo sapiens",
-        #     is_single_cell="yes",
-        #     limit=100
-        # )
-        # print(metadata)
+    #     # Example usage for the new function
+    #     metadata = db_get_filtered_srx_metadata(
+    #         conn,
+    #         organism="Homo sapiens",
+    #         is_single_cell="yes",
+    #         limit=100
+    #     )
+    #     print(metadata)

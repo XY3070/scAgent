@@ -2,7 +2,7 @@
 ## batteries
 import os
 import warnings
-from importlib import resources
+
 from typing import List, Dict, Any, Tuple, Optional
 from tempfile import NamedTemporaryFile
 ## 3rd party
@@ -11,7 +11,7 @@ import psycopg2
 from pypika import Query, Table, Field, Column, Criterion
 from psycopg2.extras import execute_values
 from psycopg2.extensions import connection
-from dynaconf import Dynaconf
+from SRAgent.config import settings
 
 # Suppress the specific warning
 warnings.filterwarnings("ignore", message="pandas only supports SQLAlchemy connectable")
@@ -19,28 +19,17 @@ warnings.filterwarnings("ignore", message="pandas only supports SQLAlchemy conne
 # functions
 def db_connect() -> connection:
     """Connect to the sql database"""
-    # get settings
-    if not os.getenv("DYNACONF"):
-        os.environ["DYNACONF"] = "prod"
-    package_path = os.path.dirname(os.path.abspath(__file__))
-    s_path1 = os.path.join(os.path.dirname(package_path), "settings.yml")
-    s_path2 = str(resources.files("SRAgent").joinpath("settings.yml"))
-    settings = Dynaconf(
-        settings_files=["settings.yml", s_path1, s_path2], 
-        environments=True,
-        merge_enabled=True,
-        env_switcher="DYNACONF"
-    )
+
 
     # connect to db
     db_params = {
-        'host': settings.db_host,
-        'database': settings.db_name,
-        'user': settings.db_user,
-        'password': settings.db_password, # 直接从 settings.yml 获取密码
-        'port': settings.db_port,
-        'sslmode': 'disable', # 禁用 SSL
-        'connect_timeout': settings.db_timeout
+        'host': settings.DB_HOST,
+        'database': settings.DB_NAME,
+        'user': settings.DB_USER,
+        'password': settings.DB_PASSWORD,
+        'port': settings.DB_PORT,
+        'sslmode': 'disable',
+        'connect_timeout': settings.DB_TIMEOUT
     }
     return psycopg2.connect(**db_params)
 
@@ -110,7 +99,7 @@ if __name__ == '__main__':
     from dotenv import load_dotenv
     load_dotenv(override=True)
 
-    os.environ["DYNACONF"] = "test"
+
     with db_connect() as conn:
        print(conn)
     

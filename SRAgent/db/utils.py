@@ -108,7 +108,6 @@ def execute_query(stmt, conn: connection) -> Optional[List[Tuple]]:
                 results = cur.fetchall()
                 return results if results else []  # Return empty list for no results
             else:
-                conn.commit()  # Commit only for data-modifying queries
                 return None
     except psycopg2.errors.DuplicateTable as e:
         # This error occurs when CREATE TABLE is executed without IF NOT EXISTS
