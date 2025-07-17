@@ -58,6 +58,14 @@ def metadata_agent_parser(subparsers):
         '--write-graph', type=str, metavar='FILE', default=None,
         help='Write the workflow graph to a file and exit (supports .png, .svg, .pdf, .mermaid formats)'
     )
+    sub_parser.add_argument(
+        '--output-csv', type=str, default=None,
+        help='Path to save the metadata as a CSV file'
+    )
+    sub_parser.add_argument(
+        '--no-summaries', action='store_true', default=False,
+        help='Do NOT print step summaries during processing'
+    )
 
 
 async def _process_single_srx(
@@ -93,13 +101,54 @@ async def _process_single_srx(
             msg = await step_summary_chain.ainvoke({"step": step})
             print(f"[{entrez_srx[0]}] Step {i}: {msg.content}")
 
+    extracted_metadata = {
+        "entrez_id": entrez_srx[0],
+        "SRX": entrez_srx[1],
+        "is_illumina": None,
+        "is_single_cell": None,
+        "is_paired_end": None,
+        "lib_prep": None,
+        "tech_10x": None,
+        "cell_prep": None,
+        "organism": None,
+        "tissue": None,
+        "disease": None,
+        "perturbation": None,
+        "cell_line": None,
+        "tissue_ontology_term_id": None,
+        "SRR": None,
+    }
+
     if final_state:
-        print(f"#-- Final results for Entrez ID {entrez_srx[0]} --#")
         try:
-            print(final_state["final_state_node"]["messages"][-1].content)
-        except KeyError:
-            print("Processing skipped")
-    print("#---------------------------------------------#")
+            extracted_metadata.update({
+                "is_illumina": final_state.get("is_illumina"),
+                "is_single_cell": final_state.get("is_single_cell"),
+                "is_paired_end": final_state.get("is_paired_end"),
+                "lib_prep": final_state.get("lib_prep"),
+                "tech_10x": final_state.get("tech_10x"),
+                "cell_prep": final_state.get("cell_prep"),
+                "organism": final_state.get("organism"),
+                "tissue": final_state.get("tissue"),
+                "disease": final_state.get("disease"),
+                "perturbation": final_state.get("perturbation"),
+                "cell_line": final_state.get("cell_line"),
+                "tissue_ontology_term_id": ", ".join(final_state.get("tissue_ontology_term_id", []) if final_state.get("tissue_ontology_term_id") is not None else []),
+                "SRR": ", ".join(final_state.get("SRR", []) if final_state.get("SRR") is not None else []),
+            })
+            # Print final results after extracting, but ensure extracted_metadata is returned
+            try:
+                print(f"#-- Final results for Entrez ID {entrez_srx[0]} --#")
+                print(final_state["final_state_node"]["messages"][-1].content)
+                print("#---------------------------------------------#")
+            except KeyError:
+                print(f"#-- Final results for Entrez ID {entrez_srx[0]} --#")
+                print("Could not retrieve final message content.")
+                print("#---------------------------------------------#")
+        except Exception as e:
+            print(f"Error extracting metadata from final state: {e}")
+            print("#---------------------------------------------#")
+    return extracted_metadata
 
 async def _metadata_agent_main(args):
     """
@@ -140,20 +189,34 @@ async def _metadata_agent_main(args):
 
     async def _process_with_semaphore(entrez_id):
         async with semaphore:
-            await _process_single_srx(
+            return await _process_single_srx(
                 entrez_id,
                 args.database,
                 graph,
                 step_summary_chain,
                 config,
-                args.no_summaries,
+                args.no_summaries
             )
 
     # Create tasks for each entrez_id
     tasks = [_process_with_semaphore(x) for x in entrez_srx]
     
     # Run tasks concurrently with limited concurrency
-    await asyncio.gather(*tasks)
+    results = await asyncio.gather(*tasks)
+
+    # Filter out None results and create DataFrame
+    valid_results = [r for r in results if r is not None]
+
+    if valid_results:
+        df = pd.DataFrame(valid_results)
+        print("\n--- Collected Metadata ---")
+        print(df.to_string())
+
+        if args.output_csv:
+            df.to_csv(args.output_csv, index=False)
+            print(f"\nMetadata saved to {args.output_csv}")
+    else:
+        print("No metadata collected.")
 
 def metadata_agent_main(args):
     asyncio.run(_metadata_agent_main(args))
