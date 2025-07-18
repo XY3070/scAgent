@@ -81,6 +81,7 @@ def db_get_filtered_srx_metadata(
     conn: connection, 
     organism: str = None,
     is_single_cell: str = None,
+    query: str = None,
     limit: int = 100,
     database: str="sra"
     ) -> pd.DataFrame:
@@ -102,6 +103,16 @@ def db_get_filtered_srx_metadata(
         criteria.append(srx_metadata.organism == organism)
     if is_single_cell:
         criteria.append(srx_metadata.is_single_cell == is_single_cell)
+    if query:
+        # Add a case-insensitive search across multiple text fields
+        # Using ilike for case-insensitive LIKE in PostgreSQL
+        search_pattern = f"%{query.lower()}%"
+        criteria.append(
+            Criterion.any([
+                srx_metadata.title.ilike(search_pattern),
+                srx_metadata.design_description.ilike(search_pattern)
+            ])
+        )
 
     stmt = Query \
         .from_(srx_metadata) \

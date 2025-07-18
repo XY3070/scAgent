@@ -1,69 +1,88 @@
 # import
-## batteries
+# 导入标准库
 import os
 import asyncio
+
+# 导入第三方库
 from Bio import Entrez
 from langchain_core.messages import HumanMessage
+
+# 导入项目内部模块
 from SRAgent.cli.utils import CustomFormatter
 from SRAgent.agents.sragent import create_sragent_agent
 from SRAgent.workflows.graph_utils import handle_write_graph_option
 from SRAgent.agents.display import create_agent_stream, display_final_results
 
-# functions
+# 定义函数
 def sragent_parser(subparsers):
-    help = 'SRAgent: high-level agent for working with sequence data.'
-    desc = """
-    # Example prompts:
-    1. "Convert GSE121737 to SRX accessions"
-    2. "Is SRX25994842 Illumina sequence data, 10X Genomics data, and which organism?"
-    3. "List the collaborators for the SRX20554853 dataset"
-    4. "Obtain all SRR accessions for SRX20554853"
-    5. "Is SRP309720 paired-end sequencing data?"
+    """
+    为 SRAgent 设置命令行参数解析器。
+
+    Args:
+        subparsers: argparse 的子解析器对象，用于添加新的子命令。
+
+    Returns:
+        None
+    """
+    help_msg = 'SRAgent: 用于处理序列数据的高级代理。'
+    description = """
+    # 示例提示：
+    1. "将 GSE121737 转换为 SRX 登录号"
+    2. "SRX25994842 是 Illumina 序列数据、10X Genomics 数据，以及属于哪个生物体？"
+    3. "列出 SRX20554853 数据集的合作者"
+    4. "获取 SRX20554853 的所有 SRR 登录号"
+    5. "SRP309720 是双端测序数据吗？"
     """
     sub_parser = subparsers.add_parser(
-        'sragent', help=help, description=desc, formatter_class=CustomFormatter
+        'sragent', help=help_msg, description=description, formatter_class=CustomFormatter
     )
     sub_parser.set_defaults(func=sragent_main)
-    sub_parser.add_argument('prompt', type=str, help='Prompt for the agent') 
+    sub_parser.add_argument('prompt', type=str, help='代理的提示。') 
     sub_parser.add_argument('--max-concurrency', type=int, default=3, 
-                            help='Maximum number of concurrent processes')
+                            help='最大并发进程数。')
     sub_parser.add_argument('--recursion-limit', type=int, default=40,
-                            help='Maximum recursion limit')
+                            help='最大递归限制。')
     sub_parser.add_argument(
         '--write-graph', type=str, metavar='FILE', default=None,
-        help='Write the workflow graph to a file and exit (supports .png, .svg, .pdf, .mermaid formats)'
+        help='将工作流图写入文件并退出（支持 .png, .svg, .pdf, .mermaid 格式）。'
     )
 
 def sragent_main(args):
     """
-    Main function for invoking the sragent agent
+    调用 SRAgent 代理的主函数。
+
+    Args:
+        args: 命令行解析后的参数对象。
+
+    Returns:
+        None
     """
-    # set email and api key
+    # 设置 Entrez 邮箱和 API 密钥
     Entrez.email = os.getenv("EMAIL")
     Entrez.api_key = os.getenv("NCBI_API_KEY")
     
-    # handle write-graph option
+    # 处理写入图选项
     if args.write_graph:
         handle_write_graph_option(create_sragent_agent, args.write_graph)
         return
 
-    # invoke agent with streaming
+    # 以流式方式调用代理
     config = {
         "max_concurrency" : args.max_concurrency,
         "recursion_limit": args.recursion_limit
     }
-    input = {"messages": [HumanMessage(content=args.prompt)]}
+    input_data = {"messages": [HumanMessage(content=args.prompt)]}
     results = asyncio.run(
         create_agent_stream(
-            input, create_sragent_agent, config, 
+            input_data, create_sragent_agent, config, 
             summarize_steps=not args.no_summaries,
             no_progress=args.no_progress
         )
     )
     
-    # Display final results with rich formatting
+    # 以富文本格式显示最终结果
     display_final_results(results)
 
-# main
+# 主程序入口
 if __name__ == '__main__':
     pass

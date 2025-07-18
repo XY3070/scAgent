@@ -25,10 +25,14 @@ def load_settings() -> Dict[str, Any]:
     s_path = str(resources.files("SRAgent").joinpath("settings.yml"))
     if not os.path.exists(s_path):
         raise FileNotFoundError(f"Settings file not found: {s_path}")
+    # Determine the environment to load
+    current_env = os.getenv("DYNACONF_ENV", "default") # Use DYNACONF_ENV as the environment variable for Dynaconf
+
     settings = Dynaconf(
         settings_files=[s_path], 
         environments=True, 
-        env_switcher="DYNACONF"
+        env_switcher="DYNACONF_ENV", # Use DYNACONF_ENV as the switcher
+        current_env=current_env # Set the current environment
     )
     return settings
 
