@@ -15,9 +15,6 @@ def load_settings() -> Dict[str, Any]:
     """
     Load settings from settings.yml file
     
-    Args:
-        env: Environment to load settings for ('test' or 'prod')
-        
     Returns:
         Dictionary containing settings for the specified environment
     """

@@ -96,6 +96,19 @@ def metadata_agent_parser(subparsers):
         '--query', type=str, default=None,
         help='用于过滤结果的查询字符串（例如：“human lung”）。此参数将被转换为 --filter-by 参数。'
     )
+    # 添加 organism, single_cell 和 keywords 参数
+    sub_parser.add_argument(
+        '--organism', type=str, default=None,
+        help='按生物体过滤 SRX 登录号。'
+    )
+    sub_parser.add_argument(
+        '--single-cell', type=str, default=None, choices=['true', 'false'],
+        help='按单细胞状态过滤 SRX 登录号（“true”或“false”）。'
+    )
+    sub_parser.add_argument(
+        '--keywords', type=str, default=None,
+        help='按关键词过滤 SRX 登录号。'
+    )
 
 
 async def _process_single_srx(
@@ -195,6 +208,8 @@ async def _process_single_srx(
             print("#---------------------------------------------#")
     return extracted_metadata
 
+
+
 async def _metadata_agent_main(args):
     """
     调用元数据代理的主函数。
@@ -236,29 +251,18 @@ async def _metadata_agent_main(args):
             from SRAgent.db.connect import db_connect
             from SRAgent.db.get import db_get_unprocessed_records, db_get_filtered_srx_metadata
             with db_connect() as conn:
-                filters = {}
-                # 解析过滤器参数
-                for f in args.filter_by:
-                    key, value = f.split('=', 1)
-                    filters[key] = value
-
                 # 如果提供了过滤器，则使用 db_get_filtered_srx_metadata
-                if filters:
-                    records_df = db_get_filtered_srx_metadata(
-                        conn=conn,
-                        organism=filters.get('organism'),
-                        is_single_cell=filters.get('is_single_cell'),
-                        query=filters.get('query'),
-                        limit=args.limit,
-                        database=args.database
-                    )
-                    entrez_srx_accessions = list(records_df[['entrez_id', 'srx_accession']].itertuples(index=False, name=None))
-                else:
-                    # 获取未处理的记录
-                    entrez_srx_accessions = db_get_unprocessed_records(conn, database=args.database)
-                    # 转换为元组列表
-                    entrez_srx_accessions = [(x, None) for x in entrez_srx_accessions]
-
+                records_df = db_get_filtered_srx_metadata(
+                    conn=conn,
+                    organism=args.organism,
+                    is_single_cell=args.single_cell,
+                    keywords=args.keywords,
+                    query=args.query,
+                    limit=args.limit,
+                    database=args.database
+                )
+                entrez_srx_accessions = list(records_df[['entrez_id', 'srx_accession']].itertuples(index=False, name=None))
+                
                 print(f"从数据库中检索到的记录: {entrez_srx_accessions}")
                 if not entrez_srx_accessions:
                     print("数据库中没有找到未处理的记录。")

@@ -114,6 +114,8 @@ def main():
         SRX_info_agent_main(args)
     elif args.command.lower() == "find-datasets":
         # 执行查找数据集主函数
+        if args.tenant:
+            os.environ["DYNACONF_ENV"] = args.tenant
         find_datasets_main(args)
     else:
         # 如果指定了未知命令，则打印提示信息并退出
