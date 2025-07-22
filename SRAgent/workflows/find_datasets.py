@@ -22,7 +22,7 @@ from SRAgent.agents.find_datasets import create_find_datasets_agent
 from SRAgent.workflows.srx_info import create_SRX_info_graph
 from SRAgent.db.connect import db_connect
 from SRAgent.db.upsert import db_upsert
-from SRAgent.db.get import db_get_entrez_ids
+from SRAgent.db.get import db_get_entrez_ids, get_prefiltered_datasets_from_local_db
 
 # state
 class GraphState(TypedDict):
@@ -197,6 +197,61 @@ def create_find_datasets_graph():
     # compile the graph
     graph = workflow.compile()
     return graph
+
+# 新的节点 1: SQL 预筛选节点
+async def sql_prefilter_node(state: dict, db_pool) -> dict:
+    """Node to perform SQL pre-filtering on the local database."""
+    message = state["message"]
+    args = state["cli_args"] # 假设我们将CLI参数放入state
+    
+    async with db_pool.acquire() as conn:
+        prefiltered_results = await get_prefiltered_datasets_from_local_db(
+            conn=conn,
+            organisms=args.organisms,
+            min_date=args.min_date,
+            max_date=args.max_date,
+            search_term=message, # 将整个用户消息作为搜索词
+            limit=100 # 设置一个合理的预筛选上限
+        )
+    
+    return {"prefiltered_data": prefiltered_results, "messages": state["messages"] + ["SQL pre-filtering complete."]}
+
+# 新的节点 2: LLM 二次精筛节点
+def create_llm_refine_node(model):
+    """Creates a node for LLM to refine the pre-filtered dataset list."""
+    # 这里定义一个 agent，其 prompt 指示它从列表中筛选
+    # prompt 示例:
+    # "You are a bioinformatics expert. Given the following list of datasets in JSON format,
+    # select the top {max_datasets} most relevant ones for the query: '{user_query}'.
+    # For each, provide the srx_id and a brief justification.
+    # Datasets: {json_data}"
+    
+    # ... Agent 和 Node 的具体实现 ...
+    # 这个节点会输出一个最终的 srx_id 列表
+    pass 
+
+# 新的工作流构建函数
+def create_local_db_find_datasets_graph(db_pool):
+    """Creates the LangGraph workflow for finding datasets from the local DB."""
+    workflow = StateGraph(...)
+
+    # 定义节点
+    workflow.add_node("sql_prefilter", lambda state: sql_prefilter_node(state, db_pool))
+    
+    # ... 定义 LLM 精筛节点和后续处理节点 ...
+    # llm_refine_node = create_llm_refine_node(model)
+    # workflow.add_node("llm_refine", llm_refine_node)
+    
+    # srx_info_node = create_SRX_info_graph() # 可以复用
+    # workflow.add_node("process_srx_info", srx_info_node)
+    
+    # 定义流程
+    workflow.set_entry_point("sql_prefilter")
+    workflow.add_edge("sql_prefilter", "llm_refine")
+    # ... 定义从 llm_refine 到 process_srx_info 的条件边
+    
+    return workflow.compile()
+
 
 # main
 if __name__ == "__main__":

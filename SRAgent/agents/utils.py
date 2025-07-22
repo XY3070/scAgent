@@ -196,6 +196,14 @@ def set_model(
             except KeyError:
                 if temperature is None:
                     raise ValueError(f"No reasoning effort or temperature was provided for agent '{agent_name}'")
+    if max_tokens is None:
+        try:
+            max_tokens = settings["max_tokens"][agent_name]
+        except KeyError:
+            try:
+                max_tokens = settings["max_tokens"]["default"]
+            except KeyError:
+                pass # No max_tokens provided
     if service_tier is None:
         try:
             service_tier = settings["service_tier"][agent_name]
@@ -283,21 +291,6 @@ def set_model(
         else:
             default_headers["X-Qwen-Enable-Thinking"] = "false"
             
-        model = ChatOpenAI(
-            model_name=model_name,
-            openai_api_base=settings["qwen_api_base"],
-            openai_api_key=settings["qwen_api_key"],
-            temperature=temperature,
-            max_tokens=max_tokens,
-            top_p=0.8,
-            presence_penalty=1.5,
-            default_headers=default_headers
-        )
-    elif model_name.startswith("moonshot") or model_name.startswith("kimi"):
-        # 推荐做法：用 OpenAI SDK 兼容方式调用 Moonshot/Kimi K2
-        # api_key = os.getenv("MOONSHOT_API_KEY")
-        # if not api_key:
-        #     raise ValueError("MOONSHOT_API_KEY environment variable not set")
         model = ChatOpenAI(
             model_name=model_name,
             openai_api_base=settings["qwen_api_base"],

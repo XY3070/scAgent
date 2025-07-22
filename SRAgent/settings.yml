@@ -16,7 +16,7 @@ default:
   db_port: 5432
   db_user: "yanglab"
   db_password: "labyang" 
-  db_timeout: 30
+  db_timeout: 300
   service_tier: "standard"
   flex_timeout: 180
   qwen_api_base: "http://10.28.1.21:30080/v1"
@@ -84,6 +84,9 @@ test:
     find_datasets: "low"
     step_summary: ""
     get_entrez_ids: "low"
+  max_tokens:
+    default: 4096
+    find_datasets: 4096
   service_tier:
     default: "default"
     esearch: "default"

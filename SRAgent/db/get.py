@@ -10,6 +10,7 @@ from psycopg2.extras import execute_values
 from psycopg2.extensions import connection
 ## package
 from SRAgent.db.utils import execute_query
+import logging
 
 # functions
 def db_find_srx(srx_accessions: List[str], conn: connection) -> List[int]:
@@ -230,6 +231,77 @@ def db_get_table_data(conn: connection, table_name: str) -> pd.DataFrame:
         .from_(tbl) \
         .select("*")
     return pd.read_sql(str(stmt), conn)
+
+async def get_prefiltered_datasets_from_local_db(
+    conn,
+    organisms: list,
+    min_date: str,
+    max_date: str,
+    search_term: str,
+    limit: int = 50  # 预筛选上限
+) -> list:
+    """
+    Performs a pre-filtering query against the local sra_geo_ft table.
+    """
+    query_parts = ["SELECT srx_id, study_title, summary, overall_design, scientific_name, library_strategy FROM merged.sra_geo_ft WHERE 1=1"]
+    params = []
+
+    # 1. 物种筛选 (Organism Filtering)
+    # 优先使用 scientific_name，但也兼容其他字段
+    organism_clauses = []
+    if "human" in organisms:
+        organism_clauses.append("scientific_name = 'Homo sapiens'")
+        organism_clauses.append("organism_ch1 = 'human'")
+        organism_clauses.append("common_name = 'human'")
+    if "mouse" in organisms:
+        organism_clauses.append("scientific_name = 'Mus musculus'")
+        organism_clauses.append("organism_ch1 = 'mouse'")
+        organism_clauses.append("common_name = 'mouse'")
+    # 可以根据 'other-orgs' 扩展
+        
+    if organism_clauses:
+        query_parts.append(f"AND ({' OR '.join(organism_clauses)})")
+
+    # 2. 单细胞筛选 (Single-Cell Filtering)
+    sc_strategies = "'%scRNA-Seq%'", "'%SINGLE_CELL%'", "'%10x Genomics%'"
+    query_parts.append(f"AND (library_strategy ILIKE ANY(ARRAY[{','.join(sc_strategies)}]) OR technology ILIKE ANY(ARRAY[{','.join(sc_strategies)}]))")
+    
+    # 3. 数据可用性筛选 (Data Availability Filtering)
+    query_parts.append("AND (sra_ID IS NOT NULL OR study_xref_link IS NOT NULL)")
+
+    # 4. 日期筛选 (Date Filtering) - 假设存在 submission_date 字段
+    # 请根据您的实际列名修改 'submission_date'
+    if min_date:
+        params.append(min_date)
+        query_parts.append(f"AND submission_date >= ${len(params)}")
+    if max_date:
+        params.append(max_date)
+        query_parts.append(f"AND submission_date <= ${len(params)}")
+        
+    # 5. 语义关键词筛选 (Semantic Keyword Filtering)
+    if search_term:
+        search_fields = ["study_title", "summary", "gse_title", "gsm_title", "overall_design", "characteristics_ch1"]
+        keyword_clauses = []
+        # 使用 %s 或 $1, $2 格式取决于你的DB driver
+        params.append(f"%{search_term}%")
+        param_index = len(params)
+        for field in search_fields:
+            keyword_clauses.append(f"{field} ILIKE ${param_index}")
+        query_parts.append(f"AND ({' OR '.join(keyword_clauses)})")
+
+    query_parts.append(f"LIMIT {limit}")
+    
+    final_query = " ".join(query_parts)
+    logging.info(f"Executing local DB query: {final_query}")
+    
+    try:
+        results = await conn.fetch(final_query, *params)
+        # 将 asyncpg.Record 转换为 dict 列表
+        return [dict(row) for row in results]
+    except Exception as e:
+        logging.error(f"Local DB query failed: {e}")
+        return []
+
 
 # main
 if __name__ == "__main__":
