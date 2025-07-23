@@ -1,6 +1,7 @@
 # import
 ## batteries
 import os
+import sys
 from typing import List, Dict, Any, Tuple, Optional, Set
 ## 3rd party
 import psycopg2
@@ -13,7 +14,7 @@ from SRAgent.db.utils import execute_query
 import logging
 
 # functions
-def db_find_srx(srx_accessions: List[str], conn: connection) -> List[int]:
+def db_find_srx(srx_accessions: List[str], conn: connection) -> pd.DataFrame:
     """
     Get SRX records on the database
     Args:
@@ -29,7 +30,8 @@ def db_find_srx(srx_accessions: List[str], conn: connection) -> List[int]:
         .distinct() \
         .where(srx_metadata.srx_accession.isin(srx_accessions))
     # return as pandas dataframe
-    return pd.read_sql(str(stmt), conn)
+    df = pd.read_sql(str(stmt), conn)
+    return df
 
 def db_get_srx_records(conn: connection, column: str="entrez_id", database: str="sra") -> List[int]:
     """
@@ -49,7 +51,8 @@ def db_get_srx_records(conn: connection, column: str="entrez_id", database: str=
         .where(srx_metadata.database == database)
         
     # Fetch the results and return a list of {target_column} values
-    return [row[0] for row in execute_query(stmt, conn)]
+    results = execute_query(stmt, conn)
+    return [row[0] for row in results] if results else []
 
 def db_get_unprocessed_records(conn: connection, database: str="sra") -> List[int]:
     """
@@ -76,7 +79,8 @@ def db_get_unprocessed_records(conn: connection, database: str="sra") -> List[in
         )
         
     # Fetch the results and return a list of entrez_id values
-    return [row[0] for row in execute_query(stmt, conn)]
+    results = execute_query(stmt, conn)
+    return [row[0] for row in results] if results else []
 
 def db_get_filtered_srx_metadata(
     conn: connection, 
@@ -142,11 +146,12 @@ def db_get_filtered_srx_metadata(
         .limit(limit)
         
     # fetch as pandas dataframe
-    return pd.read_sql(str(stmt), conn)
+    df = pd.read_sql(str(stmt), conn)
+    return df if not df.empty else []
 
 def db_get_srx_accessions(
     conn: connection, database: str="sra"
-    ) -> Set[str]:
+    ) -> Set[int]:
     """
     Get all SRX accessions in the screcounter database
     Args:
@@ -169,18 +174,19 @@ def db_get_srx_accessions(
     # fetch records
     with conn.cursor() as cur:
         cur.execute(str(stmt))
-        return set([row[0] for row in cur.fetchall()])
+        results = cur.fetchall()
+        return set([int(row[0]) for row in results]) if results else set()
 
 def db_get_entrez_ids(
     conn: connection, database: str="sra"
-    ) -> Set[str]:
+    ) -> Set[int]:
     """
     Get all Entrez IDs in the screcounter database
     Args:
         conn: Connection to the database.
         database: Name of the sequence database (e.g., sra)
     Returns:
-        Set of Entrez IDs in the database.
+        Set of Entrez IDs in the database. Returns empty set if no results.
     """
     srx_metadata = Table("srx_metadata")
     stmt = Query \
@@ -196,7 +202,36 @@ def db_get_entrez_ids(
     # fetch records
     with conn.cursor() as cur:
         cur.execute(str(stmt))
-        return set([row[0] for row in cur.fetchall()])
+        results = cur.fetchall()
+        return set([int(row[0]) for row in results]) if results else set()
+
+def db_get_entrez_ids(
+    conn: connection, database: str="sra"
+    ) -> Set[int]:
+    """
+    Get all Entrez IDs in the screcounter database
+    Args:
+        conn: Connection to the database.
+        database: Name of the sequence database (e.g., sra)
+    Returns:
+        Set of Entrez IDs in the database. Returns empty set if no results.
+    """
+    srx_metadata = Table("srx_metadata")
+    stmt = Query \
+        .from_(srx_metadata) \
+        .where(
+            srx_metadata.database == database
+        ) \
+        .select(
+            srx_metadata.entrez_id
+        ) \
+        .distinct()
+        
+    # fetch records
+    with conn.cursor() as cur:
+        cur.execute(str(stmt))
+        results = cur.fetchall()
+        return set([int(row[0]) for row in results]) if results else set()
 
 def db_get_eval(conn: connection, dataset_ids: List[str]) -> pd.DataFrame:
     """
@@ -246,61 +281,61 @@ async def get_prefiltered_datasets_from_local_db(
     query_parts = ["SELECT srx_id, study_title, summary, overall_design, scientific_name, library_strategy FROM merged.sra_geo_ft WHERE 1=1"]
     params = []
 
+    conditions = []
+
     # 1. 物种筛选 (Organism Filtering)
-    # 优先使用 scientific_name，但也兼容其他字段
     organism_clauses = []
     if "human" in organisms:
-        organism_clauses.append("scientific_name = 'Homo sapiens'")
-        organism_clauses.append("organism_ch1 = 'human'")
-        organism_clauses.append("common_name = 'human'")
+        organism_clauses.extend(["scientific_name = 'Homo sapiens'", "organism_ch1 = 'human'", "common_name = 'human'"])
     if "mouse" in organisms:
-        organism_clauses.append("scientific_name = 'Mus musculus'")
-        organism_clauses.append("organism_ch1 = 'mouse'")
-        organism_clauses.append("common_name = 'mouse'")
-    # 可以根据 'other-orgs' 扩展
-        
+        organism_clauses.extend(["scientific_name = 'Mus musculus'", "organism_ch1 = 'mouse'", "common_name = 'mouse'"])
     if organism_clauses:
-        query_parts.append(f"AND ({' OR '.join(organism_clauses)})")
+        conditions.append(f"({' OR '.join(organism_clauses)})")
 
     # 2. 单细胞筛选 (Single-Cell Filtering)
-    sc_strategies = "'%scRNA-Seq%'", "'%SINGLE_CELL%'", "'%10x Genomics%'"
-    query_parts.append(f"AND (library_strategy ILIKE ANY(ARRAY[{','.join(sc_strategies)}]) OR technology ILIKE ANY(ARRAY[{','.join(sc_strategies)}]))")
+    sc_patterns = ["%scRNA-Seq%", "%SINGLE_CELL%", "%10x Genomics%"]
+    # 为每个模式创建占位符
+    sc_placeholders = ", ".join(["%s"] * len(sc_patterns))
+    conditions.append(f"(library_strategy ILIKE ANY(ARRAY[{sc_placeholders}]) OR technology ILIKE ANY(ARRAY[{sc_placeholders}]))")
+    params.extend(sc_patterns) # 将所有模式添加到参数列表
+    params.extend(sc_patterns) # 因为有两个 ILIKE ANY，所以需要添加两次
     
     # 3. 数据可用性筛选 (Data Availability Filtering)
-    query_parts.append("AND (sra_ID IS NOT NULL OR study_xref_link IS NOT NULL)")
+    conditions.append("(sra_ID IS NOT NULL OR study_xref_link IS NOT NULL)")
 
-    # 4. 日期筛选 (Date Filtering) - 假设存在 submission_date 字段
-    # 请根据您的实际列名修改 'submission_date'
-    if min_date:
+    # 4. 日期筛选 (Date Filtering)
+    if min_date and min_date != "":
+        conditions.append("submission_date >= %s")
         params.append(min_date)
-        query_parts.append(f"AND submission_date >= ${len(params)}")
-    if max_date:
+    if max_date and max_date != "":
+        conditions.append("submission_date <= %s")
         params.append(max_date)
-        query_parts.append(f"AND submission_date <= ${len(params)}")
         
     # 5. 语义关键词筛选 (Semantic Keyword Filtering)
-    if search_term:
+    if search_term and search_term != "":
         search_fields = ["study_title", "summary", "gse_title", "gsm_title", "overall_design", "characteristics_ch1"]
-        keyword_clauses = []
-        # 使用 %s 或 $1, $2 格式取决于你的DB driver
+        combined_search_fields = " || ' ' || ".join(search_fields)
+        conditions.append(f"({combined_search_fields} ILIKE %s)")
         params.append(f"%{search_term}%")
-        param_index = len(params)
-        for field in search_fields:
-            keyword_clauses.append(f"{field} ILIKE ${param_index}")
-        query_parts.append(f"AND ({' OR '.join(keyword_clauses)})")
+
+    if conditions:
+        query_parts.append("AND " + " AND ".join(conditions))
 
     query_parts.append(f"LIMIT {limit}")
     
     final_query = " ".join(query_parts)
-    logging.info(f"Executing local DB query: {final_query}")
+    print(f"Executing local DB query: {final_query}", file=sys.stderr)
+    print(f"Parameters: {params}", file=sys.stderr) # 添加这行来调试
     
+    # 执行查询
     try:
-        results = await conn.fetch(final_query, *params)
-        # 将 asyncpg.Record 转换为 dict 列表
-        return [dict(row) for row in results]
+        df = pd.read_sql(final_query, conn, params=params)
+        print(f"Found {len(df)} prefiltered datasets.", file=sys.stderr)
+        return df.to_dict(orient='records') if not df.empty else []
     except Exception as e:
-        logging.error(f"Local DB query failed: {e}")
+        print(f"Error executing pre-filtering query: {e}", file=sys.stderr)
         return []
+
 
 
 # main

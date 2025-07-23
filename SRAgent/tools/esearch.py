@@ -138,10 +138,16 @@ def esearch_batch(
                 if verbose:
                     print(f'processed {retstart} of {search_results["Count"]} records', file=sys.stderr);
                 # filter entrez ids
-                if target_entrez_ids:   
-                    ids.extend([x for x in search_results['IdList'] if x in target_entrez_ids])
-                else:
-                    ids.extend([x for x in search_results['IdList'] if x not in existing_ids])
+                if 'IdList' in search_results and search_results['IdList']:
+                    if target_entrez_ids:   
+                        ids.extend([x for x in search_results['IdList'] if x in target_entrez_ids])
+                    else:
+                        # If filter_existing is True, filter out existing IDs
+                        if filter_existing:
+                            ids.extend([x for x in search_results['IdList'] if x not in existing_ids])
+                        else:
+                            # If filter_existing is False, add all IDs
+                            ids.extend(search_results['IdList'])
                 # update retstart
                 retstart += retmax
                 time.sleep(0.34)

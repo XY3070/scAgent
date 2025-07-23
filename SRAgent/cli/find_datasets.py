@@ -88,7 +88,7 @@ def find_datasets_parser(subparsers):
         help='将工作流图写入文件并退出（支持.png, .svg, .pdf, .mermaid格式）'
     )
     sub_parser.add_argument(
-        '--no-summaries', action='store_true', default=False,
+        '--no-summaries', action='store_true', default=True,
         help='禁用步骤摘要输出'
     )
     sub_parser.add_argument(
@@ -201,7 +201,7 @@ async def _find_datasets_main(args, conn):
                     if isinstance(msg, list):
                         for x in msg:
                             if x.content.startswith("# SRX accession: "):
-                                results.append({"accession": x.content.split(": ")[1].strip()})
+                                results.append({"accession": x.content.split(": ")[1].strip()}) 
         except (KeyError, IndexError):
             pass
         

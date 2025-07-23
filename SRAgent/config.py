@@ -30,3 +30,18 @@ class Config:
 
 # 实例化配置，以便直接导入使用
 settings = Config()
+
+# Entrez ID extraction prompt constants
+ENTREZ_ID_EXTRACTION_PROMPT_PREFIX = "You are a helpful assistant for a bioinformatics researcher."
+ENTREZ_ID_EXTRACTION_PROMPT_TASKS = """
+# Tasks
+ - Extract Entrez IDs (e.g., 19007785 or 27176348) from the message below.
+    - If you cannot find any Entrez IDs, do not provide any accessions.
+    - Entrez IDs may be referred to as 'database IDs' or 'accession numbers'.
+ - Extract the database name (e.g., GEO, SRA, etc.)
+   - If you cannot find the database name, do not provide any database name.
+   - GEO should be formatted as 'gds'
+   - SRA should be formatted as 'sra'"""
+ENTREZ_ID_EXTRACTION_PROMPT_MESSAGE_START = "#-- START OF MESSAGE --#"
+ENTREZ_ID_EXTRACTION_PROMPT_MESSAGE_END = "#-- END OF MESSAGE --#"
+ENTREZ_ID_EXTRACTION_PROMPT_RETRY_SUFFIX = "If no valid Entrez IDs or database are found, return empty values."

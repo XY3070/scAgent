@@ -2,6 +2,7 @@ import os
 import re
 import sys
 import asyncio
+import os
 from functools import wraps
 from importlib import resources
 from typing import Dict, Any, Optional
@@ -19,7 +20,12 @@ def load_settings() -> Dict[str, Any]:
         Dictionary containing settings for the specified environment
     """
     # get path to settings
-    s_path = str(resources.files("SRAgent").joinpath("settings.yml"))
+    # 获取当前文件所在的目录
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    # 向上两级目录到达项目根目录 (SRAgent/SRAgent/agents/utils.py -> SRAgent/SRAgent -> SRAgent)
+    project_root = os.path.abspath(os.path.join(current_dir, os.pardir, os.pardir))
+    # 构建 settings.yml 的绝对路径
+    s_path = os.path.join(project_root, "SRAgent", "settings.yml")
     if not os.path.exists(s_path):
         raise FileNotFoundError(f"Settings file not found: {s_path}")
     # Determine the environment to load

@@ -23,6 +23,13 @@ from SRAgent.workflows.srx_info import create_SRX_info_graph
 from SRAgent.db.connect import db_connect
 from SRAgent.db.upsert import db_upsert
 from SRAgent.db.get import db_get_entrez_ids, get_prefiltered_datasets_from_local_db
+from SRAgent.config import (
+    ENTREZ_ID_EXTRACTION_PROMPT_PREFIX,
+    ENTREZ_ID_EXTRACTION_PROMPT_TASKS,
+    ENTREZ_ID_EXTRACTION_PROMPT_MESSAGE_START,
+    ENTREZ_ID_EXTRACTION_PROMPT_MESSAGE_END,
+    ENTREZ_ID_EXTRACTION_PROMPT_RETRY_SUFFIX
+)
 
 # state
 class GraphState(TypedDict):
@@ -67,18 +74,11 @@ def create_get_entrez_ids_node() -> Callable:
         # create prompt
         message = state["messages"][-1].content
         prompt = "\n".join([
-            "You are a helpful assistant for a bioinformatics researcher.",
-            "# Tasks",
-            " - Extract Entrez IDs (e.g., 19007785 or 27176348) from the message below.",
-            "    - If you cannot find any Entrez IDs, do not provide any accessions.",
-            "    - Entrez IDs may be referred to as 'database IDs' or 'accession numbers'.",
-            " - Extract the database name (e.g., GEO, SRA, etc.)",
-            "   - If you cannot find the database name, do not provide any database name.",
-            "   - GEO should be formatted as 'gds'"
-            "   - SRA should be formatted as 'sra'",
-            "#-- START OF MESSAGE --#",
+            ENTREZ_ID_EXTRACTION_PROMPT_PREFIX,
+            ENTREZ_ID_EXTRACTION_PROMPT_TASKS,
+            ENTREZ_ID_EXTRACTION_PROMPT_MESSAGE_START,
             message,
-            "#-- END OF MESSAGE --#"
+            ENTREZ_ID_EXTRACTION_PROMPT_MESSAGE_END
         ])
         
         # invoke model with structured output; try 3 times to get valid output
@@ -95,7 +95,7 @@ def create_get_entrez_ids_node() -> Callable:
             except Exception as e:
                 if "OpenAIRefusalError" in str(type(e).__name__) and i < max_retries - 1:
                     print(f"OpenAI refused to extract Entrez IDs (attempt {i + 1}), retrying...", file=sys.stderr)
-                    prompt += "\nIf no valid Entrez IDs or database are found, return empty values."
+                    prompt += f"\n{ENTREZ_ID_EXTRACTION_PROMPT_RETRY_SUFFIX}"
                     continue
                 else:
                     # For final attempt or other errors, use empty values
@@ -117,7 +117,7 @@ def create_get_entrez_ids_node() -> Callable:
 
         # cap number of entrez IDs to max_datasets in config
         max_datasets = config.get("configurable", {}).get("max_datasets")
-        if max_datasets and max_datasets > 0 and len(entrez_ids) > max_datasets:
+        if entrez_ids and max_datasets and max_datasets > 0 and len(entrez_ids) > max_datasets:
             entrez_ids = entrez_ids[:max_datasets]
 
         ## update the database
@@ -141,12 +141,15 @@ def continue_to_srx_info(state: GraphState, config: RunnableConfig) -> List[Dict
     """
     ## submit each SRX accession to the metadata graph
     responses = []
-    for entrez_id in state["entrez_ids"]:
-        input = {
-            "database": state["database"],
-            "entrez_id": str(entrez_id), # 确保 entrez_id 是字符串类型
-        }
-        responses.append(Send("srx_info_node", input))
+    # 确保 entrez_ids 和 database 存在且有效
+    if "entrez_ids" in state and state["entrez_ids"] and "database" in state and state["database"]:
+        for entrez_id in state["entrez_ids"]:
+            input = {
+                "database": state["database"],
+                "entrez_id": str(entrez_id), # 确保 entrez_id 是字符串类型
+                "messages": [HumanMessage(content=f"Process Entrez ID {entrez_id} from {state['database']} database.")]
+            }
+            responses.append(Send("srx_info_node", input))
     return responses
 
 def final_state(state: GraphState) -> Dict[str, Any]:
@@ -178,6 +181,99 @@ def final_state(state: GraphState) -> Dict[str, Any]:
         "messages": [AIMessage(content=message)]
     }
 
+def get_prefiltered_datasets_node(conn):
+    async def invoke_get_prefiltered_datasets_node(
+        state: GraphState,
+        config: RunnableConfig,
+    ) -> Dict[str, Any]:
+        cli_args = state["cli_args"]
+        # 调用预筛选函数
+        prefiltered_datasets = await get_prefiltered_datasets_from_local_db(
+            conn=conn,
+            organisms=cli_args.organisms,
+            min_date=cli_args.min_date,
+            max_date=cli_args.max_date,
+            search_term=cli_args.message.strip('"'), # 移除消息中的引号
+            limit=cli_args.max_datasets
+        )
+
+        # 从DataFrame中提取srx_id作为entrez_ids
+        entrez_ids = []
+        if prefiltered_datasets:
+            # 确保srx_id是整数，并且不为None
+            entrez_ids = [int(d['srx_id']) for d in prefiltered_datasets if d.get('srx_id') is not None]
+
+        print(f"Found {len(entrez_ids)} prefiltered SRX IDs.", file=sys.stderr)
+
+        return {"entrez_ids": entrez_ids, "database": "sra"} # 假设数据库是sra
+    return invoke_get_prefiltered_datasets_node
+
+def create_local_db_find_datasets_graph(conn):
+    #-- graph --#
+    workflow = StateGraph(GraphState)
+
+    # nodes
+    workflow.add_node("get_prefiltered_datasets_node", get_prefiltered_datasets_node(conn))
+    workflow.add_node("srx_info_node", create_SRX_info_graph())
+    workflow.add_node("final_state_node", final_state)
+
+    # edges
+    workflow.add_edge(START, "get_prefiltered_datasets_node")
+    workflow.add_conditional_edges(
+        "get_prefiltered_datasets_node",
+        lambda state: "final_state_node" if not state["entrez_ids"] else "srx_info_node",
+        {"srx_info_node": "srx_info_node", "final_state_node": "final_state_node"}
+    )
+    workflow.add_edge("srx_info_node", "final_state_node")
+    workflow.add_edge("final_state_node", END)
+
+    return workflow.compile()
+
+def get_prefiltered_datasets_node(conn):
+    async def invoke_get_prefiltered_datasets_node(state: GraphState, config: RunnableConfig) -> Dict[str, Any]:
+        cli_args = state["cli_args"]
+        prefiltered_datasets = get_prefiltered_datasets_from_local_db(
+            conn=conn,
+            search_term=state["messages"][-1].content, # Use search_term instead of message
+            organisms=cli_args.organisms,
+            min_date=cli_args.min_date,
+            max_date=cli_args.max_date,
+            limit=cli_args.max_datasets # Use cli_args.max_datasets as limit
+        )
+
+        # Ensure prefiltered_datasets is a list, even if empty
+        if prefiltered_datasets is None:
+            prefiltered_datasets = []
+
+        # Extract SRX IDs from the prefiltered_datasets (assuming it's a list of dicts)
+        # Filter out any dictionaries that do not have 'srx_id'
+        srx_ids = [d['srx_id'] for d in prefiltered_datasets if 'srx_id' in d and d['srx_id'] is not None]
+
+        # Use db_find_srx to get Entrez IDs for these SRX IDs
+        # db_find_srx returns a DataFrame, so we need to extract entrez_id from it
+        if srx_ids:
+            print(f"SRX IDs found: {srx_ids}", file=sys.stderr)
+            srx_info_df = db_find_srx(srx_ids, conn)
+            if not srx_info_df.empty:
+                # Debugging: Print columns and head of srx_info_df
+                print(f"SRX Info DataFrame Columns: {srx_info_df.columns.tolist()}", file=sys.stderr)
+                print(f"SRX Info DataFrame Head:\n{srx_info_df.head()}", file=sys.stderr)
+                # Convert Entrez IDs to integers as expected by GraphState
+                if 'entrez_id' in srx_info_df.columns:
+                    entrez_ids = srx_info_df['entrez_id'].dropna().astype(int).tolist()
+                else:
+                    print("Error: 'entrez_id' column not found in srx_info_df", file=sys.stderr)
+                    entrez_ids = []
+            else:
+                print("db_find_srx returned an empty DataFrame.", file=sys.stderr)
+                entrez_ids = []
+        else:
+            print("No SRX IDs extracted from prefiltered_datasets.", file=sys.stderr)
+            entrez_ids = []
+
+        return {"entrez_ids": entrez_ids, "database": "sra"}
+    return invoke_get_prefiltered_datasets_node
+
 def create_find_datasets_graph():
     #-- graph --#
     workflow = StateGraph(GraphState)
@@ -191,7 +287,36 @@ def create_find_datasets_graph():
     # edges
     workflow.add_edge(START, "search_datasets_node")
     workflow.add_edge("search_datasets_node", "get_entrez_ids_node")
-    workflow.add_conditional_edges("get_entrez_ids_node", continue_to_srx_info, ["srx_info_node"])
+    workflow.add_conditional_edges(
+        "get_entrez_ids_node",
+        lambda state: "final_state_node" if not state["entrez_ids"] else "srx_info_node",
+        {"srx_info_node": "srx_info_node", "final_state_node": "final_state_node"}
+    )
+    workflow.add_edge("srx_info_node", "final_state_node")
+    workflow.add_edge("final_state_node", END)
+
+    # compile the graph
+    graph = workflow.compile()
+    return graph
+
+def create_local_db_find_datasets_graph(conn):
+    #-- graph --#
+    workflow = StateGraph(GraphState)
+
+    # nodes
+    workflow.add_node("get_prefiltered_datasets_node", get_prefiltered_datasets_node)
+    workflow.add_node("get_entrez_ids_node", create_get_entrez_ids_node())
+    workflow.add_node("srx_info_node", create_SRX_info_graph())
+    workflow.add_node("final_state_node", final_state)
+
+    # edges
+    workflow.add_edge(START, "get_prefiltered_datasets_node")
+    workflow.add_edge("get_prefiltered_datasets_node", "get_entrez_ids_node")
+    workflow.add_conditional_edges(
+        "get_entrez_ids_node",
+        lambda state: "final_state_node" if not state["entrez_ids"] else "srx_info_node",
+        {"srx_info_node": "srx_info_node", "final_state_node": "final_state_node"}
+    )
     workflow.add_edge("srx_info_node", "final_state_node")
     workflow.add_edge("final_state_node", END)
 
@@ -263,8 +388,19 @@ if __name__ == "__main__":
 
     #-- graph --#
     async def main():
-        msg = "Obtain recent single cell RNA-seq datasets in the SRA database"
-        input = {"messages" : [HumanMessage(content=msg)]}
+        # <--- MODIFICATION START --->
+        # 将CLI参数也放入初始状态，便于本地工作流节点访问
+        # 对于本地工作流，message是search_term；对于API工作流，是给Agent的指令
+        initial_state = {
+            "cli_args": args # 将args对象直接传入，方便节点访问
+        }
+        if args.source == 'local':
+            initial_state["messages"] = [HumanMessage(content=args.message)]
+            initial_state["entrez_ids"] = [int(args.message)] if args.message.isdigit() else []
+            initial_state["database"] = "sra" # 假设本地模式下默认是sra数据库
+        else:
+            initial_state["messages"] = [HumanMessage(content=args.message)]
+        # <--- MODIFICATION END --->
         config = {"max_concurrency" : 4, "recursion_limit": 200, "configurable": {"organisms": ["rat"]}}
         graph = create_find_datasets_graph()
         async for step in graph.astream(input, config=config):

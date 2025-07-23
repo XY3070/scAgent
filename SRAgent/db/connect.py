@@ -18,7 +18,9 @@ warnings.filterwarnings("ignore", message="pandas only supports SQLAlchemy conne
 
 # functions
 def db_connect() -> connection:
-    """Connect to the sql database"""
+    """
+    Connect to the sql database
+    """
 
     # connect to db
     db_params = {
@@ -98,9 +100,7 @@ if __name__ == '__main__':
     from dotenv import load_dotenv
     load_dotenv(override=True)
 
-
     with db_connect() as conn:
        print(conn)
-    
-
+       print("成功连接到数据库")
     

@@ -41,16 +41,6 @@ def arg_parse(args=None) -> dict:
         epilog=epi,        # 程序的详细描述
         formatter_class=CustomFormatter  # 使用自定义的格式化类
     )
-    # 添加 --no-progress 参数，用于禁用进度显示
-    parser.add_argument(
-        "--no-progress", action="store_true", default=False,
-        help="禁用进度显示"
-    )
-    # 添加 --no-summaries 参数，用于禁用每个工作流步骤的LLM摘要
-    parser.add_argument(
-        "--no-summaries", action="store_true", default=False,
-        help="禁用每个工作流步骤的LLM摘要"
-    )
 
     # 创建子命令解析器
     subparsers = parser.add_subparsers(dest="command", help="子命令")

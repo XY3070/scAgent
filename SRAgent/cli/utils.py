@@ -11,6 +11,7 @@ class CustomFormatter(argparse.ArgumentDefaultsHelpFormatter,
 
     - ArgumentDefaultsHelpFormatter: 在帮助消息中显示参数的默认值。
     - RawDescriptionHelpFormatter: 允许在帮助消息中使用原始的、未格式化的描述文本，
+                                 不自动换行和缩进，
                                  这对于多行描述或包含特殊格式的文本非常有用。
     """
     pass

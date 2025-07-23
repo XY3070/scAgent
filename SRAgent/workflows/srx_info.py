@@ -3,8 +3,9 @@
 import os
 import asyncio
 import operator
+import sys
 from functools import partial
-from typing import Annotated, List, Dict, Any, TypedDict, Sequence
+from typing import Annotated, List, Dict, Any, TypedDict, Sequence, Optional
 ## 3rd party
 import pandas as pd
 #import gspread
@@ -45,6 +46,7 @@ class GraphState(TypedDict):
     tech_10x: Annotated[List[str], operator.add]
     # organism
     organism: Annotated[List[str], operator.add]
+    cli_args: Any # 添加cli_args字段，用于传递CLI参数
 
 
 # functions

@@ -40,7 +40,7 @@ class TestCreateStepSummaryChain:
                     model_name="gpt-4.1-mini",
                     temperature=0,
                     reasoning_effort=None,
-                    max_tokens=45,
+                    max_tokens=450,
                     service_tier="default",
                     timeout=None
                 )
@@ -68,7 +68,7 @@ class TestCreateStepSummaryChain:
         with patch("SRAgent.agents.utils.load_settings", return_value=mock_settings):
              with patch("SRAgent.agents.utils.FlexTierChatOpenAI") as mock_chat:
                 # Pass the custom max_tokens argument
-                chain = create_step_summary_chain(max_tokens=100)
+                chain = create_step_summary_chain(max_tokens=500)
                 # Check that FlexTierChatOpenAI was created with the custom max_tokens
                 mock_chat.assert_called_once_with(
                     model_name="gpt-4.1-mini",
