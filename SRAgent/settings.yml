@@ -1,17 +1,5 @@
-moonshot:
-  db_name: "scagent"
-  models:
-    default: "Qwen3-235B-A22B"
-    sragent: "Qwen3-235B-A22B"
-  temperature:
-    default: 0.1
-    sragent: 0.1
-  reasoning_effort:
-    default: "medium"
-    sragent: "medium"
-  service_tier:
-    default: "default"
 default:
+  db_name: "scagent"
   db_host: "10.28.1.24"
   db_port: 5432
   db_user: "yanglab"

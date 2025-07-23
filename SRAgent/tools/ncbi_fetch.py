@@ -4,12 +4,16 @@ import requests
 from bs4 import BeautifulSoup
 from typing import Annotated, List, Dict, Tuple, Optional, Union, Any, Callable
 from langchain_core.tools import tool
+from SRAgent.config import settings
 
 # functions
 def _fetch_ncbi_record(
     term: Annotated[str, "The Entrez ID or SRA accession to fetch data for."],
     database: Annotated[str, "The NCBI database to fetch data from (sra or gds)."] = "sra",
 ) -> str:
+    if not settings.ONLINE_ACCESS_ENABLED:
+        return "在线访问已禁用，跳过 NCBI 网页抓取。"
+
     url = f"https://www.ncbi.nlm.nih.gov/{database}/?term={term}"
     for attempt in range(3): 
         try:
@@ -76,6 +80,9 @@ def _fetch_pubmed_record(
     term: Annotated[str, "The Entrez ID or PubMed ID to fetch data for."],
 ) -> str:
     """Fetches the NCBI PubMed page for a given PubMed ID."""
+    if not settings.ONLINE_ACCESS_ENABLED:
+        return "在线访问已禁用，跳过 PubMed 网页抓取。"
+
     url = f"https://pubmed.ncbi.nlm.nih.gov/{term}"
     for attempt in range(3):
         try:
@@ -131,6 +138,9 @@ def _extract_geo_sections(response, GEO_accession):
 def _fetch_geo_record(
     GEO_accession: Annotated[str, "The GEO accession to fetch data for."]
 ) -> str:
+    if not settings.ONLINE_ACCESS_ENABLED:
+        return "在线访问已禁用，跳过 GEO 网页抓取。"
+
     url = f"https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc={GEO_accession}"
     for attempt in range(3):
         try:
@@ -164,6 +174,9 @@ def _fetch_biosample_record(
     id: Annotated[str, "The Biosample ID to fetch data for."],
 ) -> str:
     """Fetches the NCBI Biosample page for a given Biosample ID."""
+    if not settings.ONLINE_ACCESS_ENABLED:
+        return "在线访问已禁用，跳过 Biosample 网页抓取。"
+
     url = f"https://www.ncbi.nlm.nih.gov/biosample/{id}"
     for attempt in range(3):
         try:

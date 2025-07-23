@@ -54,8 +54,14 @@ def create_convert_graph_node():
     """
     graph = create_convert_graph()
     async def invoke_convert_graph_node(state: GraphState) -> Dict[str, Any]:
-        entrez_id = state["entrez_id"]
-        database = state["database"]
+        entrez_id = state.get("entrez_id")
+        database = state.get("database")
+
+        if entrez_id is None:
+            raise ValueError(f"Missing 'entrez_id' in state for convert_graph_node. State: {state}")
+        
+        if database is None:
+            raise ValueError(f"Missing 'database' in state for convert_graph_node. State: {state}")
         message = "\n".join([
             f"Convert Entrez ID {entrez_id} to SRX or ERX accessions.",
             f"The Entrez ID is associated with the {database} database."

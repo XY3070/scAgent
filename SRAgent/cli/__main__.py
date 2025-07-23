@@ -116,7 +116,8 @@ def main():
         # 执行查找数据集主函数
         if args.tenant:
             os.environ["DYNACONF_ENV"] = args.tenant
-        find_datasets_main(args)
+        with db_connect() as conn_for_find_datasets:
+            find_datasets_main(args, conn_for_find_datasets)
     else:
         # 如果指定了未知命令，则打印提示信息并退出
         print("未指定命令。正在退出...")

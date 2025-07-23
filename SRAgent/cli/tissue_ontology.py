@@ -14,6 +14,7 @@ from SRAgent.cli.utils import CustomFormatter
 from SRAgent.workflows.tissue_ontology import create_tissue_ontology_workflow
 from SRAgent.workflows.graph_utils import handle_write_graph_option
 from SRAgent.agents.display import create_agent_stream, display_final_results
+from SRAgent.tools.utils import set_entrez_access
 
 # 函数定义
 def tissue_ontology_parser(subparsers):
@@ -54,8 +55,7 @@ def tissue_ontology_main(args):
         args: 命令行解析后的参数对象。
     """
     # 设置 Entrez 邮箱和 API 密钥
-    Entrez.email = os.getenv("EMAIL")
-    Entrez.api_key = os.getenv("NCBI_API_KEY")
+    set_entrez_access()
     
     # 处理写入图选项
     if args.write_graph:

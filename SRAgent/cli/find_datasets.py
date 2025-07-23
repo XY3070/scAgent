@@ -101,7 +101,7 @@ def find_datasets_parser(subparsers):
         help="指定数据集来源: 'local' for the local PostgreSQL database, 'api' for online NCBI Entrez API." 
     )
 
-async def _find_datasets_main(args, db_pool):
+async def _find_datasets_main(args, conn):
     """
     调用查找数据集工作流的主函数。
     """
@@ -126,11 +126,11 @@ async def _find_datasets_main(args, db_pool):
     if args.source == 'local':
         print("INFO: Using local database source...")
         # 本地模式下不需要设置 Entrez 访问
-        graph = create_local_db_find_datasets_graph(db_pool)
+        graph = create_local_db_find_datasets_graph(conn)
     else: # args.source == 'api'
         print("INFO: Using Entrez API source...")
         # API 模式下需要设置 Entrez 访问
-        set_entrez_access()
+        # set_entrez_access() # 统一由 tools/utils.py 中的 set_entrez_access 控制
         graph = create_find_datasets_graph()
 
     # 处理写入工作流图的选项
@@ -216,11 +216,11 @@ async def _find_datasets_main(args, db_pool):
             for result in results:
                 print(f"SRX accession: {result['accession']}")
 
-def find_datasets_main(args):
+def find_datasets_main(args, conn):
     """
     查找数据集的主入口函数，运行异步主函数。
     """
-    asyncio.run(_find_datasets_main(args))
+    asyncio.run(_find_datasets_main(args, conn))
 
 # 主程序入口
 if __name__ == '__main__':

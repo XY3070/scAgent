@@ -12,6 +12,8 @@ from Bio import Entrez
 ## 3rd party
 import xmltodict
 
+from SRAgent.config import settings
+
 # functions
 def batch_ids(ids: List[str], batch_size: int) -> List[List[str]]:
     """
@@ -125,6 +127,10 @@ def set_entrez_access() -> None:
     If no numbered email and API key are found, the default email and API key are used.
     If numbered email and API key are found, a random selection from the numbered ones is used.
     """
+    if not settings.ONLINE_ACCESS_ENABLED:
+        print("在线访问已禁用，跳过 Entrez 凭据设置。")
+        return
+
     # get number of emails and API keys
     email_indices = []
     for i in range(11):

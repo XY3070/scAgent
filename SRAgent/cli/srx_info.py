@@ -19,6 +19,7 @@ from SRAgent.workflows.graph_utils import handle_write_graph_option
 from SRAgent.agents.display import create_step_summary_chain
 from SRAgent.db.connect import db_connect 
 from SRAgent.db.get import db_get_srx_records
+from SRAgent.tools.utils import set_entrez_access
 
 # 函数定义
 def SRX_info_agent_parser(subparsers):
@@ -147,8 +148,7 @@ async def _SRX_info_agent_main(args):
             return 0
 
     # 设置 Entrez 邮箱和 API 密钥
-    Entrez.email = os.getenv("EMAIL")
-    Entrez.api_key = os.getenv("NCBI_API_KEY")
+    set_entrez_access()
 
     # 创建监督代理的工作流图
     graph = create_SRX_info_graph()

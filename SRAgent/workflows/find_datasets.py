@@ -32,6 +32,7 @@ class GraphState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], operator.add]
     entrez_ids: Annotated[List[int], "List of dataset Entrez IDs"]
     database: Annotated[str, operator.add]  # Database name (e.g., 'sra', 'gds')
+    cli_args: Any # 添加cli_args字段，用于传递CLI参数
 
 # nodes
 def create_find_datasets_node():
@@ -143,7 +144,7 @@ def continue_to_srx_info(state: GraphState, config: RunnableConfig) -> List[Dict
     for entrez_id in state["entrez_ids"]:
         input = {
             "database": state["database"],
-            "entrez_id": entrez_id, 
+            "entrez_id": str(entrez_id), # 确保 entrez_id 是字符串类型
         }
         responses.append(Send("srx_info_node", input))
     return responses
@@ -199,56 +200,54 @@ def create_find_datasets_graph():
     return graph
 
 # 新的节点 1: SQL 预筛选节点
-async def sql_prefilter_node(state: dict, db_pool) -> dict:
+async def sql_prefilter_node(state: dict, conn) -> dict:
     """Node to perform SQL pre-filtering on the local database."""
-    message = state["message"]
+    message = state["messages"][-1].content # 从messages中获取最新消息作为搜索词
     args = state["cli_args"] # 假设我们将CLI参数放入state
     
-    async with db_pool.acquire() as conn:
-        prefiltered_results = await get_prefiltered_datasets_from_local_db(
-            conn=conn,
-            organisms=args.organisms,
-            min_date=args.min_date,
-            max_date=args.max_date,
-            search_term=message, # 将整个用户消息作为搜索词
-            limit=100 # 设置一个合理的预筛选上限
-        )
+    prefiltered_results = await get_prefiltered_datasets_from_local_db(
+        conn=conn,
+        organisms=args.organisms,
+        min_date=args.min_date,
+        max_date=args.max_date,
+        search_term=message, # 将整个用户消息作为搜索词
+        limit=100 # 设置一个合理的预筛选上限
+    )
     
-    return {"prefiltered_data": prefiltered_results, "messages": state["messages"] + ["SQL pre-filtering complete."]}
+    return {"prefiltered_data": prefiltered_results, "messages": state["messages"] + [AIMessage(content="SQL pre-filtering complete.")]}
 
 # 新的节点 2: LLM 二次精筛节点
 def create_llm_refine_node(model):
     """Creates a node for LLM to refine the pre-filtered dataset list."""
-    # 这里定义一个 agent，其 prompt 指示它从列表中筛选
-    # prompt 示例:
-    # "You are a bioinformatics expert. Given the following list of datasets in JSON format,
-    # select the top {max_datasets} most relevant ones for the query: '{user_query}'.
-    # For each, provide the srx_id and a brief justification.
-    # Datasets: {json_data}"
-    
-    # ... Agent 和 Node 的具体实现 ...
-    # 这个节点会输出一个最终的 srx_id 列表
-    pass 
+    async def invoke_llm_refine_node(state: GraphState, config: RunnableConfig) -> Dict[str, Any]:
+        # 这是一个占位符实现，实际的LLM精筛逻辑需要在这里实现
+        # 假设它只是简单地返回预筛选的数据
+        print("Invoking LLM refine node (placeholder)", file=sys.stderr)
+        return {"messages": state["messages"] + [AIMessage(content="LLM refine complete.")]}
+    return invoke_llm_refine_node
 
 # 新的工作流构建函数
-def create_local_db_find_datasets_graph(db_pool):
+def create_local_db_find_datasets_graph(conn):
     """Creates the LangGraph workflow for finding datasets from the local DB."""
-    workflow = StateGraph(...)
+    workflow = StateGraph(GraphState)
 
     # 定义节点
-    workflow.add_node("sql_prefilter", lambda state: sql_prefilter_node(state, db_pool))
+    async def invoke_sql_prefilter_node(state: dict) -> dict:
+        return await sql_prefilter_node(state, conn)
+    workflow.add_node("sql_prefilter", invoke_sql_prefilter_node)
     
-    # ... 定义 LLM 精筛节点和后续处理节点 ...
-    # llm_refine_node = create_llm_refine_node(model)
-    # workflow.add_node("llm_refine", llm_refine_node)
-    
-    # srx_info_node = create_SRX_info_graph() # 可以复用
-    # workflow.add_node("process_srx_info", srx_info_node)
+    llm_refine_node = create_llm_refine_node(set_model(agent_name="llm_refine")) # 假设llm_refine也需要一个模型
+    workflow.add_node("llm_refine", llm_refine_node)
+    srx_info_node = create_SRX_info_graph() # 可以复用
+    workflow.add_node("process_srx_info", srx_info_node)
+    workflow.add_node("final_state_node", final_state)
     
     # 定义流程
     workflow.set_entry_point("sql_prefilter")
     workflow.add_edge("sql_prefilter", "llm_refine")
-    # ... 定义从 llm_refine 到 process_srx_info 的条件边
+    workflow.add_edge("llm_refine", "process_srx_info") # 暂时直接连接，后续可能需要条件边
+    workflow.add_edge("process_srx_info", "final_state_node")
+    workflow.add_edge("final_state_node", END)
     
     return workflow.compile()
 

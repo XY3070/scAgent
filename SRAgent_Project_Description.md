@@ -34,7 +34,7 @@ SRAgent/
 ├── LICENSE                   # 许可证文件
 ├── README.md                 # 项目主README
 ├── README_dataset_filter.md  # 数据集过滤相关README
-├── moonshot_api.txt          # API相关信息
+
 ├── pyproject.toml            # Poetry项目配置
 ├── qwen_integration_guide.md # Qwen模型集成指南
 └── ...
@@ -53,20 +53,29 @@ SRAgent/
 
 ## 3. 核心组件详解
 
-### 3.1 配置管理 (`settings.yml` 和 `config.py`)
+### 3.1 在线访问控制
+
+项目提供了灵活的在线访问控制机制，可以通过环境变量 `SRA_ONLINE_ACCESS_ENABLED` 来全局启用或禁用所有与 NCBI 的在线交互功能。
+
+- **默认值**: False (不启用)
+- **禁用方法**: 在 `.env` 文件中设置 `SRA_ONLINE_ACCESS_ENABLED=False` 或通过命令行 `export SRA_ONLINE_ACCESS_ENABLED=False`
+- **影响范围**: 所有通过 Entrez API 和直接网页抓取的 NCBI 访问
+- **禁用后行为**: 相关函数会返回"在线访问已禁用"的提示信息，而不会实际发起网络请求
+
+### 3.2 配置管理 (`settings.yml` 和 `config.py`)
 
 项目的配置集中在 `settings.yml` 文件中，并通过 `config.py` 加载。`Dynaconf` 库用于管理这些配置，支持多环境配置和环境变量覆盖。
 
 *   **`settings.yml`**: 
     *   **路径**: <mcfile name="settings.yml" path="/ssd2/xuyuan/SRAgent/SRAgent/settings.yml"></mcfile>
     *   **作用**: 定义了项目的各种可配置参数，包括：
-        *   `moonshot`: 包含 `db_name` 以及不同智能体（如 `default`, `sragent`, `find_datasets` 等）的模型名称 (`models`)、温度 (`temperature`)、推理努力 (`reasoning_effort`)、最大 token 数 (`max_tokens`) 和服务层级 (`service_tier`)。
+        
         *   `default`: 默认的数据库连接参数 (`db_host`, `db_port`, `db_user`, `db_password`, `db_timeout`)、服务层级 (`service_tier`)、弹性超时 (`flex_timeout`) 以及Qwen API的地址和密钥。
         *   `test`: 测试环境下的特定配置，通常会覆盖 `default` 中的一些参数。
-    *   **修改方法**: 直接编辑 `settings.yml` 文件。例如，要修改 `prod` 环境下 `find_datasets` 智能体的 `max_tokens`，可以找到 `prod` 部分，然后修改 `moonshot.max_tokens.find_datasets` 的值。
+    的值。
 
 ```yaml:/ssd2/xuyuan/SRAgent/SRAgent/settings.yml
-moonshot:
+
   db_name: "scagent"
   models:
     default: "Qwen3-235B-A22B"
@@ -110,7 +119,7 @@ moonshot:
         *   `max_tokens` (int, optional): 模型生成响应的最大 token 数。如果未提供，则从 `settings.yml` 中获取。
         *   `service_tier` (str, optional): 服务层级，如 "default" 或 "flex"。影响模型的可用性和重试策略。如果未提供，则从 `settings.yml` 中获取。
     *   **修改方法**: 
-        1.  **通过 `settings.yml`**: 这是推荐的方式。在 `settings.yml` 中为特定的 `agent_name` 或 `default` 配置 `model_name`, `temperature`, `reasoning_effort`, `max_tokens`, `service_tier`。例如，要调整 `find_datasets` 的 `reasoning_effort`，修改 `moonshot.reasoning_effort.find_datasets`。
+        
         2.  **通过代码调用**: 在调用 `set_model` 的地方直接传入参数。例如，在 `create_get_entrez_ids_node` 函数中，`model = set_model(agent_name="get_entrez_ids")` 会使用 `settings.yml` 中 `get_entrez_ids` 的配置。如果需要硬编码覆盖，可以直接传入 `set_model(agent_name="get_entrez_ids", temperature=0.5)`。
 
 ### 3.3 命令行接口 (CLI) (`SRAgent/SRAgent/cli/`)

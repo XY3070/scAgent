@@ -20,7 +20,6 @@ warnings.filterwarnings("ignore", message="pandas only supports SQLAlchemy conne
 def db_connect() -> connection:
     """Connect to the sql database"""
 
-
     # connect to db
     db_params = {
         'host': settings.DB_HOST,

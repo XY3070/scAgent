@@ -11,16 +11,19 @@ class Config:
         config_settings = load_settings()
 
         # 数据库设置
-        self.DB_HOST: str = config_settings['DB_HOST']
-        self.DB_NAME: str = config_settings['DB_NAME']
-        self.DB_USER: str = config_settings['DB_USER']
-        self.DB_PASSWORD: str = config_settings['DB_PASSWORD']
-        self.DB_PORT: int = config_settings['DB_PORT']
-        self.DB_TIMEOUT: int = config_settings['DB_TIMEOUT']
+        self.DB_HOST: str = config_settings.get('db_host', config_settings.get('prod', {}).get('db_host', ''))
+        self.DB_NAME: str = config_settings.get('db_name', config_settings.get('prod', {}).get('db_name'))
+        self.DB_USER: str = config_settings.get('db_user', config_settings.get('prod', {}).get('db_user', ''))
+        self.DB_PASSWORD: str = config_settings.get('db_password', config_settings.get('prod', {}).get('db_password', ''))
+        self.DB_PORT: int = config_settings.get('db_port', config_settings.get('prod', {}).get('db_port', 5432))
+        self.DB_TIMEOUT: int = config_settings.get('db_timeout', config_settings.get('prod', {}).get('db_timeout', 300))
 
         # Entrez 设置 (仍然从环境变量获取，因为settings.yml中没有这些配置)
         self.ENTREZ_EMAIL: Optional[str] = os.getenv("ENTREZ_EMAIL")
         self.ENTREZ_API_KEY: Optional[str] = os.getenv("ENTREZ_API_KEY")
+
+        # 新增：控制在线访问的开关
+        self.ONLINE_ACCESS_ENABLED = os.getenv("SRA_ONLINE_ACCESS_ENABLED", "False").lower() == "true"
 
         # 其他设置 (根据需要添加)
         self.DYNACONF_ENV: str = os.getenv("DYNACONF_ENV", "prod")

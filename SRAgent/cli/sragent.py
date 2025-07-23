@@ -12,6 +12,7 @@ from SRAgent.cli.utils import CustomFormatter
 from SRAgent.agents.sragent import create_sragent_agent
 from SRAgent.workflows.graph_utils import handle_write_graph_option
 from SRAgent.agents.display import create_agent_stream, display_final_results
+from SRAgent.tools.utils import set_entrez_access
 
 # 定义函数
 def sragent_parser(subparsers):
@@ -58,8 +59,7 @@ def sragent_main(args):
         None
     """
     # 设置 Entrez 邮箱和 API 密钥
-    Entrez.email = os.getenv("EMAIL")
-    Entrez.api_key = os.getenv("NCBI_API_KEY")
+    set_entrez_access()
     
     # 处理写入图选项
     if args.write_graph:
