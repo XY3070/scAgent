@@ -205,34 +205,6 @@ def db_get_entrez_ids(
         results = cur.fetchall()
         return set([int(row[0]) for row in results]) if results else set()
 
-def db_get_entrez_ids(
-    conn: connection, database: str="sra"
-    ) -> Set[int]:
-    """
-    Get all Entrez IDs in the screcounter database
-    Args:
-        conn: Connection to the database.
-        database: Name of the sequence database (e.g., sra)
-    Returns:
-        Set of Entrez IDs in the database. Returns empty set if no results.
-    """
-    srx_metadata = Table("srx_metadata")
-    stmt = Query \
-        .from_(srx_metadata) \
-        .where(
-            srx_metadata.database == database
-        ) \
-        .select(
-            srx_metadata.entrez_id
-        ) \
-        .distinct()
-        
-    # fetch records
-    with conn.cursor() as cur:
-        cur.execute(str(stmt))
-        results = cur.fetchall()
-        return set([int(row[0]) for row in results]) if results else set()
-
 def db_get_eval(conn: connection, dataset_ids: List[str]) -> pd.DataFrame:
     """
     Get the entrez_id values of all SRX records in the database.
@@ -273,60 +245,72 @@ async def get_prefiltered_datasets_from_local_db(
     min_date: str,
     max_date: str,
     search_term: str,
-    limit: int = 50  # 预筛选上限
+    limit: int = 100  # 预筛选上限
 ) -> list:
     """
     Performs a pre-filtering query against the local sra_geo_ft table.
     """
-    query_parts = ["SELECT srx_id, study_title, summary, overall_design, scientific_name, library_strategy FROM merged.sra_geo_ft WHERE 1=1"]
-    params = []
+    query_parts = [
+        """
+        SELECT "sra_ID", study_title, summary, overall_design, scientific_name, library_strategy
+        FROM merged.sra_geo_ft
+        WHERE 1=1
+        """
+    ]
 
+    params = []
+    # 添加条件时，每个条件前加 "AND"
     conditions = []
 
     # 1. 物种筛选 (Organism Filtering)
-    organism_clauses = []
     if "human" in organisms:
-        organism_clauses.extend(["scientific_name = 'Homo sapiens'", "organism_ch1 = 'human'", "common_name = 'human'"])
+        conditions.append("""
+            (scientific_name = %s OR "organism_ch1" = %s OR common_name = %s)
+        """)
+        params.extend(['Homo sapiens', 'human', 'human'])
+
     if "mouse" in organisms:
-        organism_clauses.extend(["scientific_name = 'Mus musculus'", "organism_ch1 = 'mouse'", "common_name = 'mouse'"])
-    if organism_clauses:
-        conditions.append(f"({' OR '.join(organism_clauses)})")
+        conditions.append("""
+            (scientific_name = %s OR "organism_ch1" = %s OR common_name = %s)
+        """)
+        params.extend(['Mus musculus', 'mouse', 'mouse'])
+
+    # if organism_clauses:
+    #     conditions.append(f"({' OR '.join(organism_clauses)})")
 
     # 2. 单细胞筛选 (Single-Cell Filtering)
     sc_patterns = ["%scRNA-Seq%", "%SINGLE_CELL%", "%10x Genomics%"]
-    # 为每个模式创建占位符
     sc_placeholders = ", ".join(["%s"] * len(sc_patterns))
-    conditions.append(f"(library_strategy ILIKE ANY(ARRAY[{sc_placeholders}]) OR technology ILIKE ANY(ARRAY[{sc_placeholders}]))")
-    params.extend(sc_patterns) # 将所有模式添加到参数列表
-    params.extend(sc_patterns) # 因为有两个 ILIKE ANY，所以需要添加两次
-    
+    conditions.append(f"""
+        ("library_strategy" ILIKE ANY(ARRAY[{sc_placeholders}]) OR "technology" ILIKE ANY(ARRAY[{sc_placeholders}]))
+    """)
+    params.extend(sc_patterns * 2)  # 添加两次，因为有两个 ILIKE ANY
+
     # 3. 数据可用性筛选 (Data Availability Filtering)
-    conditions.append("(sra_ID IS NOT NULL OR study_xref_link IS NOT NULL)")
+    conditions.append('("sra_ID" IS NOT NULL OR study_xref_link IS NOT NULL)')
 
     # 4. 日期筛选 (Date Filtering)
-    if min_date and min_date != "":
+    if min_date and min_date.strip():
         conditions.append("submission_date >= %s")
         params.append(min_date)
-    if max_date and max_date != "":
+    if max_date and max_date.strip():
         conditions.append("submission_date <= %s")
         params.append(max_date)
-        
+
     # 5. 语义关键词筛选 (Semantic Keyword Filtering)
-    if search_term and search_term != "":
-        search_fields = ["study_title", "summary", "gse_title", "gsm_title", "overall_design", "characteristics_ch1"]
+    if search_term and search_term.strip():
+        search_fields = ["study_title", "summary", "gse_title", "gsm_title", "overall_design", '"characteristics_ch1"']
         combined_search_fields = " || ' ' || ".join(search_fields)
-        conditions.append(f"({combined_search_fields} ILIKE %s)")
+        conditions.append(f"({combined_search_fields}) ILIKE %s")
         params.append(f"%{search_term}%")
-
+    
+    # 拼接查询
     if conditions:
-        query_parts.append("AND " + " AND ".join(conditions))
-
+        query_parts.extend([f"AND {cond}" for cond in conditions])
     query_parts.append(f"LIMIT {limit}")
-    
+    # 拼接最终 SQL
     final_query = " ".join(query_parts)
-    print(f"Executing local DB query: {final_query}", file=sys.stderr)
-    print(f"Parameters: {params}", file=sys.stderr) # 添加这行来调试
-    
+
     # 执行查询
     try:
         df = pd.read_sql(final_query, conn, params=params)
@@ -337,7 +321,6 @@ async def get_prefiltered_datasets_from_local_db(
         return []
 
 
-
 # main
 if __name__ == "__main__":
     from dotenv import load_dotenv
@@ -345,19 +328,19 @@ if __name__ == "__main__":
     from SRAgent.db.connect import db_connect
     
     os.environ["DYNACONF"] = "test"
-    # with db_connect() as conn:
-    #     print(db_get_eval(conn, ["eval1"]))
+    with db_connect() as conn:
+        print(db_get_eval(conn, ["eval1"]))
 
-    #     print(db_get_srx_records(conn))
-    #     print(db_get_unprocessed_records(conn))
-    #     print(len(db_get_srx_accessions(conn)))
-    #     print(db_find_srx(["SRX19162973"], conn))
+        print(db_get_srx_records(conn))
+        print(db_get_unprocessed_records(conn))
+        print(len(db_get_srx_accessions(conn)))
+        print(db_find_srx(["SRX19162973"], conn))
         
-    #     # Example usage for the new function
-    #     metadata = db_get_filtered_srx_metadata(
-    #         conn,
-    #         organism="Homo sapiens",
-    #         is_single_cell="yes",
-    #         limit=100
-    #     )
-    #     print(metadata)
+        # Example usage for the new function
+        metadata = db_get_filtered_srx_metadata(
+            conn,
+            organism="Homo sapiens",
+            is_single_cell="yes",
+            limit=100
+        )
+        print(metadata)
