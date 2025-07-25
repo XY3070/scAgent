@@ -17,7 +17,7 @@ async def test_prefilter():
 
         # 测试参数
         organisms = ["human"]
-        min_date = "2020/01/01"
+        min_date = "2010/01/01"
         max_date = "2025/07/23"
         search_term = "cancer"  # 测试关键词
         limit = 100  # 限制返回最多 100 条
@@ -36,7 +36,7 @@ async def test_prefilter():
         # 输出结果
         print(f"📊 共找到 {len(results)} 条匹配数据")
         for idx, record in enumerate(results):
-            print(f"{idx+1}. {record['srx_id']} - {record['study_title']}")
+            print(f"{idx+1}. {record['sra_ID']} - {record['study_title']}")
         return results
 
 if __name__ == "__main__":

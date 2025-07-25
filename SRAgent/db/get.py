@@ -249,6 +249,8 @@ async def get_prefiltered_datasets_from_local_db(
 ) -> list:
     """
     Performs a pre-filtering query against the local sra_geo_ft table.
+    Note: Date filtering is now based on "gsm_submission_date" instead of "submission_date",
+      to avoid invalid date values ('0000-00-00') in the original field.
     """
     query_parts = [
         """
@@ -265,9 +267,9 @@ async def get_prefiltered_datasets_from_local_db(
     # 1. 物种筛选 (Organism Filtering)
     if "human" in organisms:
         conditions.append("""
-            (scientific_name = %s OR "organism_ch1" = %s OR common_name = %s)
+            (organism_ch1 ILIKE %s OR scientific_name ILIKE %s OR organism ILIKE %s OR source_name_ch1 ILIKE %s OR common_name ILIKE %s)
         """)
-        params.extend(['Homo sapiens', 'human', 'human'])
+        params.extend(['%homo sapiens%', '%homo sapiens%', '%homo sapiens%', '%human%', '%human%'])
 
     if "mouse" in organisms:
         conditions.append("""
@@ -275,26 +277,33 @@ async def get_prefiltered_datasets_from_local_db(
         """)
         params.extend(['Mus musculus', 'mouse', 'mouse'])
 
-    # if organism_clauses:
-    #     conditions.append(f"({' OR '.join(organism_clauses)})")
-
     # 2. 单细胞筛选 (Single-Cell Filtering)
-    sc_patterns = ["%scRNA-Seq%", "%SINGLE_CELL%", "%10x Genomics%"]
-    sc_placeholders = ", ".join(["%s"] * len(sc_patterns))
+    sc_keywords = [
+        "%scRNA%", "%single cell%", "%10x%", "%10X%", "%Chromium%",
+        "%C1 Fluidigm%", "%Smart-seq%", "%microwell%", "%droplet%",
+        "%inDrop%", "%Seq-Well%", "%Fluidigm%"
+    ]
+    sc_placeholders = ", ".join(["%s"] * len(sc_keywords))
     conditions.append(f"""
-        ("library_strategy" ILIKE ANY(ARRAY[{sc_placeholders}]) OR "technology" ILIKE ANY(ARRAY[{sc_placeholders}]))
+        (
+            library_strategy ILIKE ANY(ARRAY[{sc_placeholders}]) OR
+            technology ILIKE ANY(ARRAY[{sc_placeholders}]) OR
+            characteristics_ch1 ILIKE ANY(ARRAY[{sc_placeholders}]) OR
+            summary ILIKE ANY(ARRAY[{sc_placeholders}]) OR
+            overall_design ILIKE ANY(ARRAY[{sc_placeholders}])
+        )
     """)
-    params.extend(sc_patterns * 2)  # 添加两次，因为有两个 ILIKE ANY
+    params.extend(sc_keywords * 5)  # 添加五次，因为有五个 ILIKE ANY
 
     # 3. 数据可用性筛选 (Data Availability Filtering)
     conditions.append('("sra_ID" IS NOT NULL OR study_xref_link IS NOT NULL)')
 
     # 4. 日期筛选 (Date Filtering)
     if min_date and min_date.strip():
-        conditions.append("submission_date >= %s")
+        conditions.append("gsm_submission_date::date >= %s")
         params.append(min_date)
     if max_date and max_date.strip():
-        conditions.append("submission_date <= %s")
+        conditions.append("gsm_submission_date::date <= %s")
         params.append(max_date)
 
     # 5. 语义关键词筛选 (Semantic Keyword Filtering)
@@ -314,6 +323,7 @@ async def get_prefiltered_datasets_from_local_db(
     # 执行查询
     try:
         df = pd.read_sql(final_query, conn, params=params)
+        print(final_query)
         print(f"Found {len(df)} prefiltered datasets.", file=sys.stderr)
         return df.to_dict(orient='records') if not df.empty else []
     except Exception as e:
