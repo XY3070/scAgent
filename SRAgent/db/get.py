@@ -5,6 +5,7 @@ import sys
 from typing import List, Dict, Any, Tuple, Optional, Set
 ## 3rd party
 import psycopg2
+from psycopg2.sql import SQL, Literal  
 import pandas as pd
 from pypika import Query, Table, Field, Column, Criterion
 from psycopg2.extras import execute_values
@@ -14,6 +15,13 @@ from SRAgent.db.utils import execute_query
 import logging
 
 # functions
+def execute_query_with_cursor(conn, query, params):
+    with conn.cursor() as cursor:
+        cursor.execute(query, tuple(params))
+        colnames = [desc[0] for desc in cursor.description]
+        results = cursor.fetchall()
+        return pd.DataFrame(results, columns=colnames)  
+
 def db_find_srx(srx_accessions: List[str], conn: connection) -> pd.DataFrame:
     """
     Get SRX records on the database
@@ -283,21 +291,33 @@ async def get_prefiltered_datasets_from_local_db(
         "%C1 Fluidigm%", "%Smart-seq%", "%microwell%", "%droplet%",
         "%inDrop%", "%Seq-Well%", "%Fluidigm%"
     ]
-    sc_placeholders = ", ".join(["%s"] * len(sc_keywords))
+    sc_keywords_str = "{" + ",".join(sc_keywords) + "}"  # 转换为 PostgreSQL 数组字符串
     conditions.append(f"""
         (
-            library_strategy ILIKE ANY(ARRAY[{sc_placeholders}]) OR
-            technology ILIKE ANY(ARRAY[{sc_placeholders}]) OR
-            characteristics_ch1 ILIKE ANY(ARRAY[{sc_placeholders}]) OR
-            summary ILIKE ANY(ARRAY[{sc_placeholders}]) OR
-            overall_design ILIKE ANY(ARRAY[{sc_placeholders}])
+            library_strategy ILIKE ANY(%s) OR
+            technology ILIKE ANY(%s) OR
+            characteristics_ch1 ILIKE ANY(%s) OR
+            summary ILIKE ANY(%s) OR
+            overall_design ILIKE ANY(%s)
         )
     """)
-    params.extend(sc_keywords * 5)  # 添加五次，因为有五个 ILIKE ANY
+    params.extend([sc_keywords_str] * 5)  # 传递 5 个数组参数
 
     # 3. 数据可用性筛选 (Data Availability Filtering)
-    conditions.append('("sra_ID" IS NOT NULL OR study_xref_link IS NOT NULL)')
-
+    conditions.append(f"""
+        (
+            sra_ID ~* '^(SRX|SRR|SRP|DRX|DRR|DRP|ERX|ERR|ERP)[0-9]{{6,}}$' OR
+            study_alias ~* '^(SRP|ERP|DRP)[0-9]{{6,}}$' OR
+            run_alias ~* '^(SRR|DRR|ERR)[0-9]{{6,}}$' OR
+            study_xref_link ILIKE ANY(ARRAY[
+                '%ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE%',
+                '%ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM%',
+                '%ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GPL%'
+            ]) OR
+            gse_title IS NOT NULL
+        )
+    """)
+        
     # 4. 日期筛选 (Date Filtering)
     if min_date and min_date.strip():
         conditions.append("gsm_submission_date::date >= %s")
@@ -320,10 +340,12 @@ async def get_prefiltered_datasets_from_local_db(
     # 拼接最终 SQL
     final_query = " ".join(query_parts)
 
+    print("Type of params:", type(params))
+    print("Params:", params)
+
     # 执行查询
     try:
-        df = pd.read_sql(final_query, conn, params=params)
-        print(final_query)
+        df = execute_query_with_cursor(conn, final_query, params)
         print(f"Found {len(df)} prefiltered datasets.", file=sys.stderr)
         return df.to_dict(orient='records') if not df.empty else []
     except Exception as e:
