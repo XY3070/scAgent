@@ -17,7 +17,7 @@ import logging
 # functions
 def execute_query_with_cursor(conn, query, params):
     with conn.cursor() as cursor:
-        cursor.execute(query, tuple(params))
+        cursor.execute(query, params)
         colnames = [desc[0] for desc in cursor.description]
         results = cursor.fetchall()
         return pd.DataFrame(results, columns=colnames)  
@@ -260,13 +260,11 @@ async def get_prefiltered_datasets_from_local_db(
     Note: Date filtering is now based on "gsm_submission_date" instead of "submission_date",
       to avoid invalid date values ('0000-00-00') in the original field.
     """
-    query_parts = [
-        """
+    query_parts = ["""
         SELECT "sra_ID", study_title, summary, overall_design, scientific_name, library_strategy
         FROM merged.sra_geo_ft
         WHERE 1=1
-        """
-    ]
+    """]
 
     params = []
     # 添加条件时，每个条件前加 "AND"
@@ -279,19 +277,12 @@ async def get_prefiltered_datasets_from_local_db(
         """)
         params.extend(['%homo sapiens%', '%homo sapiens%', '%homo sapiens%', '%human%', '%human%'])
 
-    if "mouse" in organisms:
-        conditions.append("""
-            (scientific_name = %s OR "organism_ch1" = %s OR common_name = %s)
-        """)
-        params.extend(['Mus musculus', 'mouse', 'mouse'])
-
     # 2. 单细胞筛选 (Single-Cell Filtering)
     sc_keywords = [
         "%scRNA%", "%single cell%", "%10x%", "%10X%", "%Chromium%",
         "%C1 Fluidigm%", "%Smart-seq%", "%microwell%", "%droplet%",
         "%inDrop%", "%Seq-Well%", "%Fluidigm%"
     ]
-    sc_keywords_str = "{" + ",".join(sc_keywords) + "}"  # 转换为 PostgreSQL 数组字符串
     conditions.append(f"""
         (
             library_strategy ILIKE ANY(%s) OR
@@ -301,7 +292,7 @@ async def get_prefiltered_datasets_from_local_db(
             overall_design ILIKE ANY(%s)
         )
     """)
-    params.extend([sc_keywords_str] * 5)  # 传递 5 个数组参数
+    params.extend([sc_keywords] * 5)
 
     # 3. 数据可用性筛选 (Data Availability Filtering)
     conditions.append(f"""
@@ -340,12 +331,13 @@ async def get_prefiltered_datasets_from_local_db(
     # 拼接最终 SQL
     final_query = " ".join(query_parts)
 
-    print("Type of params:", type(params))
+    print("Final SQL:", final_query)
+    print("Number of %s in SQL:", final_query.count("%s"))
     print("Params:", params)
 
     # 执行查询
     try:
-        df = execute_query_with_cursor(conn, final_query, params)
+        df = execute_query_with_cursor(conn, final_query, tuple(params))
         print(f"Found {len(df)} prefiltered datasets.", file=sys.stderr)
         return df.to_dict(orient='records') if not df.empty else []
     except Exception as e:
