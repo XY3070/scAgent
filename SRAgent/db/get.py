@@ -4,8 +4,7 @@ import os
 import sys
 from typing import List, Dict, Any, Tuple, Optional, Set
 ## 3rd party
-import psycopg2
-from psycopg2.sql import SQL, Literal  
+import psycopg2 
 import pandas as pd
 from pypika import Query, Table, Field, Column, Criterion
 from psycopg2.extras import execute_values
@@ -16,11 +15,30 @@ import logging
 
 # functions
 def execute_query_with_cursor(conn, query, params):
-    with conn.cursor() as cursor:
+    """
+    修复版本：正确处理数据库查询和结果
+    """
+    try:
+        cursor = conn.cursor()
         cursor.execute(query, params)
+        
+        if cursor.description is None:
+            cursor.close()
+            return pd.DataFrame()
+        
         colnames = [desc[0] for desc in cursor.description]
         results = cursor.fetchall()
-        return pd.DataFrame(results, columns=colnames)  
+        cursor.close()
+        
+        return pd.DataFrame(results, columns=colnames)
+        
+    except Exception as e:
+        print(f"Database query error: {e}")
+        try:
+            cursor.close()
+        except:
+            pass
+        return pd.DataFrame()
 
 def db_find_srx(srx_accessions: List[str], conn: connection) -> pd.DataFrame:
     """
@@ -253,95 +271,246 @@ async def get_prefiltered_datasets_from_local_db(
     min_date: str,
     max_date: str,
     search_term: str,
-    limit: int = 100  # 预筛选上限
+    limit: int = 100
 ) -> list:
     """
-    Performs a pre-filtering query against the local sra_geo_ft table.
-    Note: Date filtering is now based on "gsm_submission_date" instead of "submission_date",
-      to avoid invalid date values ('0000-00-00') in the original field.
+    最终工作版本 - 只使用确认存在的字段
     """
-    query_parts = ["""
-        SELECT "sra_ID", study_title, summary, overall_design, scientific_name, library_strategy
+    
+    # 基础查询 - 只使用我们知道存在的字段
+    base_query = """
+        SELECT "sra_ID", study_title, summary, overall_design, scientific_name, 
+               library_strategy, technology, characteristics_ch1, gse_title, gsm_title,
+               organism_ch1, source_name_ch1, common_name, gsm_submission_date
         FROM merged.sra_geo_ft
         WHERE 1=1
-    """]
-
-    params = []
-    # 添加条件时，每个条件前加 "AND"
+    """
+    
     conditions = []
-
-    # 1. 物种筛选 (Organism Filtering)
-    if "human" in organisms:
-        conditions.append("""
-            (organism_ch1 ILIKE %s OR scientific_name ILIKE %s OR organism ILIKE %s OR source_name_ch1 ILIKE %s OR common_name ILIKE %s)
-        """)
+    params = []
+    
+    # 1. 物种筛选
+    if organisms and "human" in organisms:
+        human_condition = """
+        AND (organism_ch1 ILIKE %s OR scientific_name ILIKE %s OR organism ILIKE %s 
+             OR source_name_ch1 ILIKE %s OR common_name ILIKE %s)
+        """
+        conditions.append(human_condition)
         params.extend(['%homo sapiens%', '%homo sapiens%', '%homo sapiens%', '%human%', '%human%'])
-
-    # 2. 单细胞筛选 (Single-Cell Filtering)
-    sc_keywords = [
-        "%scRNA%", "%single cell%", "%10x%", "%10X%", "%Chromium%",
-        "%C1 Fluidigm%", "%Smart-seq%", "%microwell%", "%droplet%",
-        "%inDrop%", "%Seq-Well%", "%Fluidigm%"
-    ]
-    conditions.append(f"""
-        (
-            library_strategy ILIKE ANY(%s) OR
-            technology ILIKE ANY(%s) OR
-            characteristics_ch1 ILIKE ANY(%s) OR
-            summary ILIKE ANY(%s) OR
-            overall_design ILIKE ANY(%s)
-        )
-    """)
-    params.extend([sc_keywords] * 5)
-
-    # 3. 数据可用性筛选 (Data Availability Filtering)
-    conditions.append(f"""
-        (
-            sra_ID ~* '^(SRX|SRR|SRP|DRX|DRR|DRP|ERX|ERR|ERP)[0-9]{{6,}}$' OR
-            study_alias ~* '^(SRP|ERP|DRP)[0-9]{{6,}}$' OR
-            run_alias ~* '^(SRR|DRR|ERR)[0-9]{{6,}}$' OR
-            study_xref_link ILIKE ANY(ARRAY[
-                '%ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE%',
-                '%ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM%',
-                '%ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GPL%'
-            ]) OR
-            gse_title IS NOT NULL
-        )
-    """)
+    
+    # 2. 单细胞筛选 - 优化关键词
+    sc_keywords = ['%scRNA%', '%single cell%', '%10x%', '%droplet%', '%Smart-seq%']
+    sc_fields = ['library_strategy', 'technology', 'characteristics_ch1', 'summary', 'overall_design']
+    
+    # 构建单细胞条件
+    sc_conditions_list = []
+    for field in sc_fields:
+        for keyword in sc_keywords:
+            sc_conditions_list.append(f"{field} ILIKE %s")
+            params.append(keyword)
+    
+    if sc_conditions_list:
+        sc_condition = "AND (" + " OR ".join(sc_conditions_list) + ")"
+        conditions.append(sc_condition)
+    
+    # 3. 基本数据可用性
+    conditions.append('AND "sra_ID" IS NOT NULL AND "sra_ID" != \'\' AND gse_title IS NOT NULL')
+    
+    # 4. 日期筛选 - 简化版本
+    if min_date and min_date.strip() and min_date != '0000-00-00':
+        conditions.append('AND gsm_submission_date::date >= %s')
+        params.append(min_date)
+    if max_date and max_date.strip() and max_date != '0000-00-00':
+        conditions.append('AND gsm_submission_date::date <= %s')
+        params.append(max_date)
+    
+    # 5. 关键词筛选 - 只使用确认存在的字段
+    if search_term and search_term.strip():
+        keyword_condition = """
+        AND (COALESCE(study_title, '') ILIKE %s 
+             OR COALESCE(summary, '') ILIKE %s 
+             OR COALESCE(gse_title, '') ILIKE %s)
+        """
+        conditions.append(keyword_condition)
+        search_pattern = f"%{search_term}%"
+        params.extend([search_pattern, search_pattern, search_pattern])
+    
+    # 组装完整查询
+    full_query = base_query + ' '.join(conditions) + f"""
+        ORDER BY gsm_submission_date DESC NULLS LAST
+        LIMIT {limit}
+    """
+    
+    print(f"🔍 查询参数数量: {len(params)}, 占位符数量: {full_query.count('%s')}")
+    
+    try:
+        df = execute_query_with_cursor(conn, full_query, tuple(params))
         
-    # 4. 日期筛选 (Date Filtering)
+        if df.empty:
+            print("查询执行成功但没有找到匹配的记录")
+            return []
+        
+        records = df.to_dict(orient='records')
+        print(f"✅ 成功找到 {len(records)} 条记录")
+        return records
+            
+    except Exception as e:
+        print(f"❌ 查询执行错误: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
+
+
+# 单细胞专用函数 - 也移除不存在的字段
+async def get_single_cell_datasets_from_local_db(
+    conn,
+    organisms: list,
+    min_date: str,
+    max_date: str,
+    search_term: str,
+    limit: int = 100
+) -> list:
+    """
+    单细胞专用函数 - 修复版本
+    """
+    
+    base_query = """
+        SELECT "sra_ID", study_title, summary, overall_design, scientific_name, 
+               library_strategy, technology, characteristics_ch1, gse_title, gsm_title,
+               organism_ch1, source_name_ch1, common_name, gsm_submission_date
+        FROM merged.sra_geo_ft
+        WHERE 1=1
+    """
+    
+    conditions = []
+    params = []
+    
+    # 1. 物种筛选
+    if organisms and "human" in organisms:
+        conditions.append("AND (organism_ch1 ILIKE %s OR scientific_name ILIKE %s)")
+        params.extend(['%homo sapiens%', '%homo sapiens%'])
+    
+    # 2. 严格的单细胞筛选
+    strict_sc_conditions = [
+        "library_strategy ILIKE %s",  # scRNA-seq
+        "library_strategy ILIKE %s",  # single cell
+        "technology ILIKE %s",        # 10x
+        "technology ILIKE %s",        # 10X  
+        "characteristics_ch1 ILIKE %s", # single cell
+        "summary ILIKE %s",           # single cell
+        "overall_design ILIKE %s"     # single cell
+    ]
+    
+    sc_keywords = ['%scRNA%', '%single cell%', '%10x%', '%10X%', '%single cell%', '%single cell%', '%single cell%']
+    
+    conditions.append("AND (" + " OR ".join(strict_sc_conditions) + ")")
+    params.extend(sc_keywords)
+    
+    # 3. 数据质量筛选
+    conditions.append('AND "sra_ID" IS NOT NULL AND gse_title IS NOT NULL')
+    
+    # 4. 日期筛选
     if min_date and min_date.strip():
-        conditions.append("gsm_submission_date::date >= %s")
+        conditions.append('AND gsm_submission_date::date >= %s')
         params.append(min_date)
     if max_date and max_date.strip():
-        conditions.append("gsm_submission_date::date <= %s")
+        conditions.append('AND gsm_submission_date::date <= %s')
         params.append(max_date)
-
-    # 5. 语义关键词筛选 (Semantic Keyword Filtering)
-    if search_term and search_term.strip():
-        search_fields = ["study_title", "summary", "gse_title", "gsm_title", "overall_design", '"characteristics_ch1"']
-        combined_search_fields = " || ' ' || ".join(search_fields)
-        conditions.append(f"({combined_search_fields}) ILIKE %s")
-        params.append(f"%{search_term}%")
     
-    # 拼接查询
-    if conditions:
-        query_parts.extend([f"AND {cond}" for cond in conditions])
-    query_parts.append(f"LIMIT {limit}")
-    # 拼接最终 SQL
-    final_query = " ".join(query_parts)
-
-    print("Final SQL:", final_query)
-    print("Number of %s in SQL:", final_query.count("%s"))
-    print("Params:", params)
-
-    # 执行查询
+    # 5. 关键词筛选
+    if search_term and search_term.strip():
+        conditions.append("AND (study_title ILIKE %s OR summary ILIKE %s)")
+        search_pattern = f"%{search_term}%"
+        params.extend([search_pattern, search_pattern])
+    
+    full_query = base_query + ' '.join(conditions) + f" ORDER BY gsm_submission_date DESC LIMIT {limit}"
+    
+    print(f"🧬 单细胞专用查询: 参数{len(params)}个, 占位符{full_query.count('%s')}个")
+    
     try:
-        df = execute_query_with_cursor(conn, final_query, tuple(params))
-        print(f"Found {len(df)} prefiltered datasets.", file=sys.stderr)
-        return df.to_dict(orient='records') if not df.empty else []
+        df = execute_query_with_cursor(conn, full_query, tuple(params))
+        
+        if df.empty:
+            return []
+        
+        records = df.to_dict(orient='records')
+        print(f"🧬 找到 {len(records)} 条单细胞数据")
+        return records
+            
     except Exception as e:
-        print(f"Error executing pre-filtering query: {e}", file=sys.stderr)
+        print(f"❌ 单细胞查询错误: {e}")
+        return []
+
+
+# 创建一个检查表结构的辅助函数
+def check_table_structure(conn):
+    """
+    检查表结构，确认哪些字段真正存在
+    """
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_schema = 'merged' AND table_name = 'sra_geo_ft'
+            ORDER BY column_name
+        """)
+        
+        columns = [row[0] for row in cursor.fetchall()]
+        cursor.close()
+        
+        print("📊 数据库表中实际存在的字段:")
+        for i, col in enumerate(columns, 1):
+            print(f"  {i:2d}. {col}")
+        
+        return columns
+        
+    except Exception as e:
+        print(f"❌ 检查表结构失败: {e}")
+        return []
+
+
+# 最简化的测试查询
+async def simple_test_query(conn):
+    """
+    最简化的测试，确保基本功能正常
+    """
+    try:
+        print("🧪 执行最简化测试查询...")
+        
+        simple_query = """
+        SELECT "sra_ID", study_title, scientific_name
+        FROM merged.sra_geo_ft
+        WHERE "sra_ID" IS NOT NULL
+        AND study_title ILIKE %s
+        LIMIT 5
+        """
+        
+        cursor = conn.cursor()
+        cursor.execute(simple_query, ('%cancer%',))
+        
+        if cursor.description is None:
+            print("❌ 查询没有返回结果描述")
+            cursor.close()
+            return []
+        
+        colnames = [desc[0] for desc in cursor.description]
+        results = cursor.fetchall()
+        cursor.close()
+        
+        print(f"✅ 简化查询成功，找到 {len(results)} 条记录")
+        
+        if results:
+            for i, row in enumerate(results):
+                record = dict(zip(colnames, row))
+                print(f"  {i+1}. {record['sra_ID']} - {record['study_title'][:60]}...")
+        
+        return results
+        
+    except Exception as e:
+        print(f"❌ 简化查询也失败: {e}")
+        import traceback
+        traceback.print_exc()
         return []
 
 
