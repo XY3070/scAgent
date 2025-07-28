@@ -83,7 +83,6 @@ Thumbs.db
 .env
 
 # SRAgent specific
-SRAgent/settings.yml
 test_db_connection.py
 SRAgent/final_test_script.py
 assets/
