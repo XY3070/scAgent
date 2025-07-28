@@ -102,5 +102,5 @@ if __name__ == '__main__':
 
     with db_connect() as conn:
        print(conn)
-       print("成功连接到数据库")
+       print("Database connection established!")
     

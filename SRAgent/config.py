@@ -4,31 +4,38 @@ from typing import Optional
 from SRAgent.agents.utils import load_settings
 
 class Config:
-    """SRAgent的配置类。"""
+    """
+    The configuration class for SRAgent.
+    """
 
     def __init__(self):
-        # 加载settings.yml中的配置
+        # Load the configuration from settings.yml
         config_settings = load_settings()
 
-        # 数据库设置
-        self.DB_HOST: str = config_settings.get('db_host', config_settings.get('prod', {}).get('db_host', ''))
-        self.DB_NAME: str = config_settings.get('db_name', config_settings.get('prod', {}).get('db_name'))
-        self.DB_USER: str = config_settings.get('db_user', config_settings.get('prod', {}).get('db_user', ''))
-        self.DB_PASSWORD: str = config_settings.get('db_password', config_settings.get('prod', {}).get('db_password', ''))
-        self.DB_PORT: int = config_settings.get('db_port', config_settings.get('prod', {}).get('db_port', 5432))
-        self.DB_TIMEOUT: int = config_settings.get('db_timeout', config_settings.get('prod', {}).get('db_timeout', 300))
+        # Database settings
+        self.DB_HOST: str = os.getenv("SRA_AGENT_DB_HOST", config_settings.get('db_host', config_settings.get('prod', {}).get('db_host', '')))
+        self.DB_NAME: str = os.getenv("SRA_AGENT_DB_NAME", config_settings.get('db_name', config_settings.get('prod', {}).get('db_name')))
+        self.DB_USER: str = os.getenv("SRA_AGENT_DB_USER", config_settings.get('db_user', config_settings.get('prod', {}).get('db_user', '')))
+        self.DB_PASSWORD: str = os.getenv("SRA_AGENT_DB_PASSWORD", config_settings.get('db_password', config_settings.get('prod', {}).get('db_password', '')))
+        self.DB_PORT: int = int(os.getenv("SRA_AGENT_DB_PORT", config_settings.get('db_port', config_settings.get('prod', {}).get('db_port', 5432))))
+        self.DB_TIMEOUT: int = int(os.getenv("SRA_AGENT_DB_TIMEOUT", config_settings.get('db_timeout', config_settings.get('prod', {}).get('db_timeout', 300))))
 
-        # Entrez 设置 (仍然从环境变量获取，因为settings.yml中没有这些配置)
+        self.QWEN_API_BASE: Optional[str] = os.getenv("SRA_AGENT_QWEN_API_BASE", config_settings.get("qwen_api_base"))
+
+        # Entrez settings (still get from environment variables, as settings.yml does not have these configurations)
         self.ENTREZ_EMAIL: Optional[str] = os.getenv("ENTREZ_EMAIL")
         self.ENTREZ_API_KEY: Optional[str] = os.getenv("ENTREZ_API_KEY")
 
-        # 新增：控制在线访问的开关
+        # New addition: control the switch for online access
         self.ONLINE_ACCESS_ENABLED = os.getenv("SRA_ONLINE_ACCESS_ENABLED", "False").lower() == "true"
 
-        # 其他设置 (根据需要添加)
+        # New addition: control the switch for using local database
+        self.USE_LOCAL_DB = os.getenv("SRA_USE_LOCAL_DB", "False").lower() == "true"
+
+        # Other settings (add as needed)
         self.DYNACONF_ENV: str = os.getenv("DYNACONF_ENV", "prod")
 
-# 实例化配置，以便直接导入使用
+# Instantiate the configuration class, so it can be directly imported and used
 settings = Config()
 
 # Entrez ID extraction prompt constants
