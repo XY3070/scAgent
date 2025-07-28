@@ -1,0 +1,96 @@
+# Misc
+tmp/
+OLD/
+cache_*
+*.pkl
+milvus/
+volumes/
+sandbox/
+archive/
+db_bkup/
+ignore/
+data/
+*ChrisC_metadata*
+counted_SRX.txt
+notebooks/czi_annotate/
+notebooks/sql_db_check/
+screenlog.*
+*.mdc
+
+# Streamlit specific
+.streamlit/
+
+# Bytecode compiled files
+*.pyc
+__pycache__/
+
+# Distribution / packaging
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+.pytest_cache/
+*.egg-info/
+.installed.cfg
+*.egg
+sandbox*
+deepmased_files.txt
+
+# PyPI publishing
+*.tar.gz
+*.whl
+.twine/
+.pypirc
+
+# Virtual environment
+venv/
+env/
+
+# Log files
+*.log
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# IDE/Text editor specific
+.vscode/
+.idea/
+
+# If using a database, ignore the file where the database is stored, e.g. for SQLite:
+*.sqlite
+*.sqlite3
+
+# Ignore all local configuration files
+*.local
+
+# If there are any CSV, JSON, or Excel files that are data dumps not needed in the repo:
+*.csv
+*.json
+*.xls
+*.xlsx
+
+# Environment variables file
+.env
+
+# SRAgent specific
+SRAgent/settings.yml
+test_db_connection.py
+SRAgent/final_test_script.py
+assets/
+notebooks/
+scripts/
+SRAgent/agents/sragent.py
+SRAgent/agents/filter_datasets.py
+SRAgent/agents/find_datasets.py
+SRAgent/agents/tissue_ontology.py
+SRAgent/test_prefilter.py

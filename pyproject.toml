@@ -1,0 +1,70 @@
+[build-system]
+requires = ["setuptools>=42", "wheel", "build"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "SRAgent"
+version = "0.4.0"
+description = "Agentic workflows for obtaining data from the Sequence Read Archive"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [
+    { name = "Nick Youngblut", email = "nyoungb2@gmail.com" },
+]
+urls = { "Homepage" = "https://github.com/arcinstitute/SRAgent" }
+dependencies = [
+    "python-dotenv>=1.0.1",
+    "dynaconf>=3.2.6",
+    "pandas>=2.2.3",
+    "tabulate>=0.9.0",
+    "langchain~=0.3.25",
+    "langchainhub~=0.1.21", 
+    "langchain_community~=0.3.24",
+    "openai~=1.82.1",
+    "langchain_openai~=0.3.18",
+    "langchain_anthropic~=0.3.14",
+    "langgraph~=0.4.7",
+    "biopython~=1.84",
+    "xmltodict>=0.14.2",
+    "beautifulsoup4>=4.12.3",
+    "google-cloud-bigquery>=3.27.0",
+    "google-cloud-bigquery-storage>=2.27.0",
+    "google-cloud-secret-manager>=2.22.0",
+    "db-dtypes~=1.3.1",
+    "pypika~=0.48.9",
+    "psycopg2-binary~=2.9.10",
+    "chromadb~=0.6.3",
+    "langchain-chroma~=0.2.2",
+    "networkx~=3.4.2",
+    "obonet~=1.1.0",
+    "protobuf~=5.29.4",
+    "appdirs~=1.4.4",
+    "rich~=14.0.0"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0"
+]
+
+[project.scripts]
+SRAgent = "SRAgent.cli.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["SRAgent", "SRAgent.*"]
+exclude = ["tmp", "data", "tests", "*.tests", "*.tests.*", "tests.*", "tests"]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.package-data]
+SRAgent = ["settings.yml"]
+
+[tool.dynaconf]
+default_environment = "default"
+env_switcher = "DYNACONF"
+settings_files = ["settings.yml"]
+
