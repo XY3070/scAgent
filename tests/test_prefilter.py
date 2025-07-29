@@ -1,17 +1,15 @@
-#!/usr/bin/env python3
-"""
-测试新的函数式预筛选设计
-每个筛选器接受一个对象，返回新的筛选后对象
-"""
-
 import os
 import sys
 import pandas as pd
 import psycopg2
 from datetime import datetime
 from typing import List, Dict, Any
+from dotenv import load_dotenv
+import os
 
-# 数据库连接配置
+load_dotenv()
+
+# Database connection configuration
 DB_CONFIG = {
     'host': os.getenv('DB_HOST', 'localhost'),
     'database': os.getenv('DB_NAME', 'your_database'),
@@ -21,7 +19,7 @@ DB_CONFIG = {
 }
 
 def get_db_connection():
-    """获取数据库连接"""
+    """Get database connection."""
     try:
         conn = psycopg2.connect(**DB_CONFIG)
         return conn
@@ -29,13 +27,15 @@ def get_db_connection():
         print(f"❌ Database connection failed: {e}")
         return None
 
-# 为了测试，我们需要在这里重新定义一些核心类（在实际使用中会从prefilter模块导入）
+# For testing purposes, we need to redefine some core classes here (in actual use, these would be imported from the prefilter module)
 from dataclasses import dataclass
 import pandas as pd
 
 @dataclass
 class FilterResult:
-    """筛选结果数据类"""
+    """
+    Filter result data class.
+    """
     data: pd.DataFrame
     count: int
     filter_name: str
@@ -58,7 +58,9 @@ class FilterResult:
             print(f"   {self.description}")
 
 def execute_query_with_cursor(conn, query, params):
-    """执行查询并返回DataFrame"""
+    """
+    Execute query and return DataFrame.
+    """
     try:
         cursor = conn.cursor()
         cursor.execute(query, params)
@@ -81,7 +83,7 @@ def execute_query_with_cursor(conn, query, params):
             pass
         return pd.DataFrame()
 
-# 简化的筛选器类用于测试
+# Simplified filter classes for testing
 class TestInitialDatasetFilter:
     def __init__(self, conn, table_name="merged.sra_geo_ft"):
         self.conn = conn
@@ -93,7 +95,7 @@ class TestInitialDatasetFilter:
                    library_strategy, technology, characteristics_ch1, gse_title, gsm_title,
                    organism_ch1, source_name_ch1, common_name, gsm_submission_date, sc_conf_score
             FROM {self.table_name}
-            LIMIT 1000  -- 限制数量以加快测试
+            LIMIT 1000  -- Limit number of records for faster testing
         """
         
         df = execute_query_with_cursor(self.conn, query, ())
@@ -208,7 +210,9 @@ class TestKeywordSearchFilter:
         return result
 
 def test_functional_filter_chain():
-    """测试函数式筛选器链"""
+    """
+    Test the functional filter chain design.
+    """
     print("🧪 Testing Functional Filter Chain Design")
     print("-" * 50)
     
@@ -217,7 +221,7 @@ def test_functional_filter_chain():
         return False
     
     try:
-        # 创建筛选器链
+        # Create filter chain
         filters = [
             TestInitialDatasetFilter(conn),
             TestBasicAvailabilityFilter(conn),
@@ -233,12 +237,12 @@ def test_functional_filter_chain():
         for filter_obj in filters:
             result = filter_obj.apply(result)
             
-            # 检查逻辑正确性
+            # Check for logic errors
             if result.count < 0:
                 print("❌ Logic error: negative record count")
                 return False
             
-            # 如果没有记录了，提前停止
+            # If no records remain, stop the chain early
             if result.count == 0:
                 print("⚠️  No records remaining, stopping chain")
                 break
@@ -246,7 +250,7 @@ def test_functional_filter_chain():
         print("=" * 40)
         print(f"🎯 Final result: {result.count} records")
         
-        # 显示样本结果
+        # Display sample results
         if not result.data.empty:
             print("\n📋 Sample results:")
             sample_size = min(3, len(result.data))
@@ -264,7 +268,9 @@ def test_functional_filter_chain():
         conn.close()
 
 def test_individual_filters():
-    """测试各个筛选器的独立功能"""
+    """
+    Test the individual filter functions.
+    """
     print("\n🔬 Testing Individual Filter Functions")
     print("-" * 50)
     
@@ -273,7 +279,7 @@ def test_individual_filters():
         return False
     
     try:
-        # 获取初始数据
+        # Get initial data
         initial_filter = TestInitialDatasetFilter(conn)
         initial_result = initial_filter.apply()
         
@@ -283,7 +289,7 @@ def test_individual_filters():
         
         print(f"✅ Initial data loaded: {initial_result.count} records")
         
-        # 测试基础可用性筛选
+        # Test basic availability filter
         basic_filter = TestBasicAvailabilityFilter(conn)
         basic_result = basic_filter.apply(initial_result)
         
@@ -293,7 +299,7 @@ def test_individual_filters():
         
         print(f"✅ Basic availability filter: {basic_result.count} records")
         
-        # 测试物种筛选
+        # Test organism filter
         organism_filter = TestOrganismFilter(conn, ["human"])
         organism_result = organism_filter.apply(basic_result)
         
@@ -303,7 +309,7 @@ def test_individual_filters():
         
         print(f"✅ Organism filter: {organism_result.count} records")
         
-        # 测试关键词搜索
+        # Test keyword search filter
         keyword_filter = TestKeywordSearchFilter(conn, "cancer")
         keyword_result = keyword_filter.apply(organism_result)
         
@@ -318,7 +324,9 @@ def test_individual_filters():
         conn.close()
 
 def test_filter_immutability():
-    """测试筛选器的不可变性（每次返回新对象）"""
+    """
+    Test the immutability of filters (each filter returns a new object).
+    """
     print("\n🛡️  Testing Filter Immutability")
     print("-" * 50)
     
@@ -327,21 +335,21 @@ def test_filter_immutability():
         return False
     
     try:
-        # 获取初始数据
+        # Get initial data
         initial_filter = TestInitialDatasetFilter(conn)
         result1 = initial_filter.apply()
         original_count = result1.count
         
-        # 应用筛选器
+        # Apply filter
         basic_filter = TestBasicAvailabilityFilter(conn)
         result2 = basic_filter.apply(result1)
         
-        # 检查原始结果是否被修改
+        # Check if original result object was mutated
         if result1.count != original_count:
             print("❌ Filter mutated original result object")
             return False
         
-        # 检查是否返回了新对象
+        # Check if new object was returned
         if result1 is result2:
             print("❌ Filter returned same object instead of new one")
             return False
@@ -359,7 +367,9 @@ def test_filter_immutability():
         conn.close()
 
 def test_error_handling():
-    """测试错误处理"""
+    """
+    Test error handling of filters.
+    """
     print("\n🚨 Testing Error Handling")
     print("-" * 50)
     
@@ -368,7 +378,7 @@ def test_error_handling():
         return False
     
     try:
-        # 测试空数据处理
+        # Test empty data handling
         empty_result = FilterResult(
             data=pd.DataFrame(),
             count=0,
@@ -385,7 +395,7 @@ def test_error_handling():
         
         print("✅ Empty data handled correctly")
         
-        # 测试None输入处理
+        # Test None input handling
         try:
             organism_filter = TestOrganismFilter(conn, None)
             result = organism_filter.apply(empty_result)
@@ -403,7 +413,9 @@ def test_error_handling():
         conn.close()
 
 def run_all_tests():
-    """运行所有测试"""
+    """
+    Run all test functions.
+    """
     print("🧪 Functional Prefilter Design Test Suite")
     print("=" * 60)
     print(f"Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -434,7 +446,7 @@ def run_all_tests():
             print(f"💥 {test_name} CRASHED: {e}")
             results.append((test_name, False))
     
-    # 打印总结
+    # Print summary
     print("\n" + "=" * 60)
     print("📊 TEST SUMMARY")
     print("=" * 60)

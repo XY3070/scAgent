@@ -1,10 +1,3 @@
-#!/usr/bin/env python3
-"""
-db/get.py
-
-更新后的数据库查询函数，使用预筛选模块
-"""
-
 import os
 import sys
 from typing import List, Dict, Any, Tuple, Optional, Set
@@ -15,7 +8,7 @@ from psycopg2.extras import execute_values
 from psycopg2.extensions import connection
 import logging
 
-# 导入预筛选模块
+# import prefilter module
 from .prefilter import (
     FilterResult, 
     create_filter_chain, 
@@ -31,14 +24,14 @@ from .prefilter import (
     LimitFilter
 )
 
-# 原有的数据库工具函数保持不变
+# Keep all original database utility functions
 from .utils import execute_query
 
 logger = logging.getLogger(__name__)
 
 def execute_query_with_cursor(conn, query, params):
     """
-    修复版本：正确处理数据库查询和结果
+    Handle database query and results.
     """
     try:
         cursor = conn.cursor()
@@ -62,7 +55,7 @@ def execute_query_with_cursor(conn, query, params):
             pass
         return pd.DataFrame()
 
-# 保留所有原有的函数
+# Keep all original functions
 def db_find_srx(srx_accessions: List[str], conn: connection) -> pd.DataFrame:
     """
     Get SRX records on the database
@@ -288,7 +281,7 @@ def db_get_table_data(conn: connection, table_name: str) -> pd.DataFrame:
         .select("*")
     return pd.read_sql(str(stmt), conn)
 
-# 新的预筛选函数，使用独立的筛选器模块
+# New prefilter function, using independent filter module
 def get_prefiltered_datasets_functional(
     conn: connection,
     organisms: List[str] = ["human"],
@@ -299,22 +292,23 @@ def get_prefiltered_datasets_functional(
     temp_table_name: str = "temp_prefiltered_results"
 ) -> pd.DataFrame:
     """
-    使用函数式预筛选方法，每个筛选器接受一个对象，返回新的筛选后对象
+    Prefilter datasets using a functional prefiltering approach, where each filter
+    accepts an object and returns a new filtered object.
     
     Args:
-        conn: 数据库连接
-        organisms: 物种列表，默认["human"]
-        search_term: 搜索关键词
-        limit: 返回记录数限制
-        min_sc_confidence: 单细胞置信度最小值
-        create_temp_table: 是否创建临时表
-        temp_table_name: 临时表名称
+        conn: Database connection
+        organisms: List of organisms, default ["human"]
+        search_term: Search keyword
+        limit: Limit on the number of records returned
+        min_sc_confidence: Minimum single-cell confidence score
+        create_temp_table: Whether to create a temporary table
+        temp_table_name: Name of the temporary table
     
     Returns:
-        预筛选后的DataFrame
+        Prefiltered DataFrame
     """
     try:
-        # 创建筛选器链
+        # Create filter chain
         filter_chain = create_filter_chain(
             conn=conn,
             organisms=organisms,
@@ -323,10 +317,10 @@ def get_prefiltered_datasets_functional(
             min_sc_confidence=min_sc_confidence
         )
         
-        # 应用筛选器链
+        # Apply filter chain
         final_result = apply_filter_chain(filter_chain)
         
-        # 如果需要创建临时表
+        # If needed, create temporary table
         if create_temp_table and not final_result.data.empty:
             create_temporary_table(conn, final_result.data, temp_table_name)
         
@@ -342,20 +336,20 @@ def get_prefiltered_datasets_custom_chain(
     filter_params: Dict[str, Any] = None
 ) -> pd.DataFrame:
     """
-    使用自定义筛选器链进行预筛选
+    Prefilter datasets using a custom filter chain.
     
     Args:
-        conn: 数据库连接
-        custom_filters: 自定义筛选器名称列表
-        filter_params: 筛选器参数字典
+        conn: Database connection
+        custom_filters: List of custom filter names
+        filter_params: Dictionary of filter parameters
     
     Returns:
-        预筛选后的DataFrame
+        Prefiltered DataFrame
     """
     if filter_params is None:
         filter_params = {}
     
-    # 映射筛选器名称到类
+    # Map filter names to classes
     filter_map = {
         'initial': InitialDatasetFilter,
         'basic': BasicAvailabilityFilter,
@@ -369,7 +363,7 @@ def get_prefiltered_datasets_custom_chain(
     }
     
     try:
-        # 构建自定义筛选器链
+        # Build custom filter chain
         filter_chain = []
         result = None
         
@@ -380,7 +374,7 @@ def get_prefiltered_datasets_custom_chain(
             
             filter_class = filter_map[filter_name]
             
-            # 根据筛选器类型创建实例
+            # Create instance based on filter type
             if filter_name == 'organism':
                 filter_obj = filter_class(conn, filter_params.get('organisms', ['human']))
             elif filter_name == 'single_cell':
@@ -392,7 +386,7 @@ def get_prefiltered_datasets_custom_chain(
             else:
                 filter_obj = filter_class(conn)
             
-            # 应用筛选器
+            # Apply filter
             result = filter_obj.apply(result)
             
             if result.count == 0:
@@ -407,23 +401,23 @@ def get_prefiltered_datasets_custom_chain(
 
 def create_temporary_table(conn: connection, df: pd.DataFrame, table_name: str):
     """
-    创建临时表并插入预筛选结果
+    Create a temporary table and insert prefiltered results.
     
     Args:
-        conn: 数据库连接
-        df: 要插入的DataFrame
-        table_name: 临时表名称
+        conn: Database connection
+        df: DataFrame to insert
+        table_name: Name of the temporary table
     """
     try:
         cursor = conn.cursor()
         
-        # 删除已存在的临时表
+        # Delete existing temporary table
         cursor.execute(f"DROP TABLE IF EXISTS {table_name}")
         
-        # 创建临时表结构（基于DataFrame的列）
+        # Create temporary table structure (based on DataFrame columns)
         columns_def = []
         for col in df.columns:
-            # 简单的类型映射，可以根据需要扩展
+            # Simple type mapping, can be expanded as needed
             if df[col].dtype == 'object':
                 columns_def.append(f'"{col}" TEXT')
             elif df[col].dtype == 'int64':
@@ -436,16 +430,16 @@ def create_temporary_table(conn: connection, df: pd.DataFrame, table_name: str):
         create_sql = f"CREATE TEMP TABLE {table_name} ({', '.join(columns_def)})"
         cursor.execute(create_sql)
         
-        # 插入数据
+        # Insert data
         if not df.empty:
-            # 准备插入语句
+            # Prepare insert statement
             placeholders = ', '.join(['%s'] * len(df.columns))
             insert_sql = f"INSERT INTO {table_name} VALUES ({placeholders})"
             
-            # 转换DataFrame为元组列表
+            # Convert DataFrame to list of tuples
             data_tuples = [tuple(row) for row in df.values]
             
-            # 批量插入
+            # Batch insert
             cursor.executemany(insert_sql, data_tuples)
         
         conn.commit()
@@ -460,7 +454,7 @@ def create_temporary_table(conn: connection, df: pd.DataFrame, table_name: str):
         except:
             pass
 
-# 保留原始函数的兼容性版本
+# Retain original function's compatibility version
 async def get_prefiltered_datasets_from_local_db(
     conn,
     organisms: list,
@@ -468,11 +462,11 @@ async def get_prefiltered_datasets_from_local_db(
     limit: int = 100
 ) -> list:
     """
-    原始预筛选函数的兼容性版本，现在使用新的函数式筛选器
-    保持与原有代码的兼容性
+    Compatibility version of original prefiltering function, now using new functional filters
+    Maintains compatibility with existing code
     """
     try:
-        # 调用新的函数式预筛选方法
+        # Call new functional prefiltering method   
         result_df = get_prefiltered_datasets_functional(
             conn=conn,
             organisms=organisms,
@@ -484,7 +478,7 @@ async def get_prefiltered_datasets_from_local_db(
             logger.info("No records found with current filters")
             return []
         
-        # 转换为原始格式（字典列表）
+        # Convert to original format (list of dictionaries)
         records = result_df.to_dict(orient='records')
         logger.info(f"Successfully found {len(records)} records")
         return records
@@ -519,25 +513,27 @@ def check_table_structure(conn):
         print(f"❌ Failed to check table structure: {e}")
         return []
 
-# 示例用法函数
+# Example usage function
 def example_usage():
-    """展示如何使用新的预筛选系统"""
+    """
+    Show how to use the new prefiltering system
+    """
     from dotenv import load_dotenv
     from .connect import db_connect
     
     load_dotenv()
     
     with db_connect() as conn:
-        print("=== 示例1: 标准预筛选流程 ===")
+        print("=== Example 1: Standard prefiltering process ===")
         result1 = get_prefiltered_datasets_functional(
             conn=conn,
             organisms=["human"],
             search_term="cancer",
             limit=10
         )
-        print(f"结果1: {len(result1)} 条记录\n")
+        print(f"Result 1: {len(result1)} records\n")
         
-        print("=== 示例2: 自定义筛选器链 ===")
+        print("=== Example 2: Custom filter chain ===")
         result2 = get_prefiltered_datasets_custom_chain(
             conn=conn,
             custom_filters=['initial', 'basic', 'organism', 'keyword', 'limit'],
@@ -547,22 +543,22 @@ def example_usage():
                 'limit': 5
             }
         )
-        print(f"结果2: {len(result2)} 条记录\n")
+        print(f"Result 2: {len(result2)} records\n")
         
-        print("=== 示例3: 逐步手动筛选 ===")
-        # 手动创建筛选器链，可以在任意步骤停止或修改
+        print("=== Example 3: Step-by-step manual filtering ===")
+        # Manually create filter chain, can stop or modify at any step
         initial_filter = InitialDatasetFilter(conn)
         basic_filter = BasicAvailabilityFilter(conn)
         organism_filter = OrganismFilter(conn, ["human"])
         sc_filter = SingleCellFilter(conn, min_confidence=2)
         
-        # 逐步应用
+        # Apply step-by-step
         result = initial_filter.apply()
         result = basic_filter.apply(result)
         result = organism_filter.apply(result)
         result = sc_filter.apply(result)
         
-        print(f"结果3: {result.count} 条记录")
+        print(f"Result 3: {result.count} records")
 
 # main
 if __name__ == "__main__":
@@ -572,10 +568,10 @@ if __name__ == "__main__":
     
     os.environ["DYNACONF"] = "test"
     with db_connect() as conn:
-        # 运行示例
+        # Run example
         example_usage()
         
-        # 原有的测试代码
+        # Original test code
         print(db_get_eval(conn, ["eval1"]))
         print(db_get_srx_records(conn))
         print(db_get_unprocessed_records(conn))
@@ -590,3 +586,4 @@ if __name__ == "__main__":
             limit=100
         )
         print(metadata)
+        

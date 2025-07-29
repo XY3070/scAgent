@@ -1,60 +1,123 @@
-#!/usr/bin/env python3
-"""
-db/prefilter.py
-
-独立的预筛选函数模块，每个函数接受一个数据集对象，返回筛选后的新对象
-采用函数式编程思想，环环相扣，逐步筛选
-"""
-
+from SRAgent.SRAgent.db.get import metadata
 import pandas as pd
 import logging
 from typing import List, Dict, Any, Optional, Set
 from psycopg2.extensions import connection
 from dataclasses import dataclass
 from abc import ABC, abstractmethod
+from datetime import datetime
+import json
+
 
 logger = logging.getLogger(__name__)
 
 @dataclass
 class FilterResult:
-    """筛选结果数据类"""
+    """
+    Filtered results data class.
+    """
     data: pd.DataFrame
     count: int
     filter_name: str
     description: str
     reduction_count: int = 0
     reduction_pct: float = 0.0
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    warnings: List[str] = field(default_factory=list)
     
     def __post_init__(self):
-        """计算记录数"""
+        """
+        Calculate the number of records.
+        """
         if self.data is not None:
             self.count = len(self.data)
     
-    def log_result(self, previous_count: int = None):
-        """记录筛选结果"""
+    def log_result(self, previous_count: int = None, show_warnings: bool = True):
+        """
+        Log the filter results.
+        """
         if previous_count is not None:
             self.reduction_count = previous_count - self.count
             self.reduction_pct = (self.reduction_count / previous_count * 100) if previous_count > 0 else 0
             
+        # Main result line
+        time_str = f" ({self.execution_time:.2f}s)" if self.execution_time > 0 else ""
         print(f"📊 {self.filter_name}: {self.count:,} records "
-              f"(↓{self.reduction_count:,}, -{self.reduction_pct:.1f}%)")
+              f"(↓{self.reduction_count:,}, -{self.reduction_pct:.1f}%) {time_str}")
+
+        # Description 
         if self.description:
             print(f"   {self.description}")
+
+        # Warnings
+        if show_warnings and self.warnings:
+            for warning in self.warnings:
+                print(f"   ⚠️  {warning}")
+
+        # Metadata (for debugging)
+        if self.metadata and logger.isEnabledFor(logging.DEBUG):
+            print(f"   📋 Metadata: {json.dumps(self.metadata, indent=2)}")
+
         print()
 
+        def get_summary(self) -> Dict[str, Any]:
+            """
+            Get the summary of the filter results.
+            """
+            return {
+                "filter_name": self.filter_name,
+                "count": self.count,
+                "reduction_count": self.reduction_count,
+                "reduction_pct": self.reduction_pct,
+                "execution_time": self.execution_time,
+                "warnings": self.warnings,
+                "metadata": self.metadata
+            }
+
 class BaseFilter(ABC):
-    """预筛选器基类"""
+    """
+    Base filter class.
+    """
     
-    def __init__(self, conn: connection):
+    def __init__(self, conn: connection, name: str = None):
         self.conn = conn
+        self.name = name or self.__class__.__name__
         
     @abstractmethod
     def apply(self, input_result: FilterResult) -> FilterResult:
-        """应用筛选器"""
+        """
+        Apply the filter.
+        """
         pass
+
+    def _time_execution(self, func, *args, **kwargs) -> Any:
+        """
+        Time the execution of a function.
+        """
+        start_time = datetime.now()
+        result = func(*args, **kwargs)
+        end_time = datetime.now()
+        execution_time = (end_time - start_time).total_seconds()
+        return result, execution_time
     
+    def _validate_input(self, input_result: FilterResult) -> List[str]:
+        """
+        Validate the input data and return list of warnings.
+        """
+        warnings = []
+        
+        if input_result.data is None:
+            warnings.append("Input result data cannot be None")
+        
+        if input_result.count == 0:
+            warnings.append("Input result data is empty")
+        
+        return warnings
+
     def execute_query_with_cursor(self, query: str, params: tuple) -> pd.DataFrame:
-        """执行查询并返回DataFrame"""
+        """
+        Execute the query and return a DataFrame.
+        """
         try:
             cursor = self.conn.cursor()
             cursor.execute(query, params)
@@ -78,38 +141,92 @@ class BaseFilter(ABC):
             return pd.DataFrame()
 
 class InitialDatasetFilter(BaseFilter):
-    """初始数据集筛选器"""
+    """
+    Initial dataset filter class.
+    """
     
     def __init__(self, conn: connection, table_name: str = "merged.sra_geo_ft"):
-        super().__init__(conn)
+        super().__init__(conn, "Initial Dataset")
         self.table_name = table_name
     
     def apply(self, input_result: FilterResult = None) -> FilterResult:
-        """获取初始数据集"""
-        query = f"""
-            SELECT "sra_ID", study_title, summary, overall_design, scientific_name, 
-                   library_strategy, technology, characteristics_ch1, gse_title, gsm_title,
-                   organism_ch1, source_name_ch1, common_name, gsm_submission_date, sc_conf_score
-            FROM {self.table_name}
         """
-        
-        df = self.execute_query_with_cursor(query, ())
-        
-        result = FilterResult(
-            data=df,
-            count=len(df),
-            filter_name="Initial Dataset",
-            description="All records in database"
-        )
-        
+        Get the initial dataset.
+        """
+
+        def _execute():
+            # First, check what columns actually exist
+            check_query = """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = %s AND table_schema = %s
+                ORDER BY column_name
+            """
+
+            schema, table = self.table_name.split('.') if '.' in self.table_name else ('public', self.table_name)
+            avail_col_df = self.execute_query_with_cursor(check_query, (table, schema))
+
+            if avail_col_df.empty:
+                return FilterResult(
+                    data=pd.DataFrame(),
+                    count=0,
+                    filter_name=self.name,
+                    description="Table not found or inaccessible",
+                    warnings=[f"Table {self.table_name} does not exist"]
+                )
+
+            avail_col = set(avail_col_df['column_name'].tolist())
+
+            # Define desired cols and check availability 
+            desired_cols = [
+                'sra_ID', 'study_title', 'summary', 'overall_design', 'scientific_name',
+                'library_strategy', 'technology', 'characteristics_ch1', 'gse_title', 
+                'gsm_title', 'organism_ch1', 'source_name_ch1', 'common_name', 
+                'gsm_submission_date', 'sc_conf_score'
+            ]
+
+            # Select only columns that exist
+            existing_cols = [col for col in desired_cols if col in avail_col]
+            missing_cols = [col for col in desired_cols if col not in avail_col]
+
+            warnings = []
+            if missing_cols:
+                warnings.append(f"Missing columns: {', '.join(missing_cols)}")
+            
+            # Build query with existing columns
+            columns_str = ', '.join([f'"{col}"' for col in existing_columns])
+            query = f"SELECT {columns_str} FROM {self.table_name}"
+            
+            df = self.execute_query_with_cursor(query, ())
+
+            return FilterResult(
+                data=df,
+                count=len(df),
+                filter_name=self.name,
+                description="All records in database",
+                warnings=warnings,
+                metadata={
+                    'table_name': self.table_name,
+                    'available_columns': list(avail_col),
+                    'selected_columns': existing_cols,
+                    'missing_columns': missing_cols
+                }
+            )
+
+        result, exec_time = self._time_execution(_execute)
+        result.execution_time = exec_time
         result.log_result()
         return result
 
 class BasicAvailabilityFilter(BaseFilter):
-    """基础数据可用性筛选器"""
+    """
+    Basic availability filter class.
+    """
     
     def apply(self, input_result: FilterResult) -> FilterResult:
-        """筛选具有基础数据的记录"""
+        """
+        Filter records with basic data.
+        """
         if input_result.data.empty:
             return FilterResult(
                 data=pd.DataFrame(),
@@ -118,7 +235,7 @@ class BasicAvailabilityFilter(BaseFilter):
                 description="No input data"
             )
         
-        # 在内存中筛选，而不是重新查询数据库
+        # Filter records with basic data in memory, instead of re-querying the database
         filtered_df = input_result.data[
             (input_result.data['sra_ID'].notna()) & 
             (input_result.data['sra_ID'] != '') & 
@@ -136,21 +253,25 @@ class BasicAvailabilityFilter(BaseFilter):
         return result
 
 class OrganismFilter(BaseFilter):
-    """物种筛选器"""
+    """
+    Organism filter class.
+    """
     
     def __init__(self, conn: connection, organisms: List[str]):
         super().__init__(conn)
         self.organisms = organisms
     
     def apply(self, input_result: FilterResult) -> FilterResult:
-        """筛选指定物种的记录"""
+        """
+        Filter records with specified organisms.
+        """
         if input_result.data.empty or not self.organisms:
             return input_result
             
         if "human" not in [org.lower() for org in self.organisms]:
             return input_result
         
-        # 在内存中筛选
+        # Filter records with specified organisms in memory
         human_mask = (
             input_result.data['organism_ch1'].str.contains('homo sapiens', case=False, na=False) |
             input_result.data['scientific_name'].str.contains('homo sapiens', case=False, na=False) |
@@ -171,59 +292,131 @@ class OrganismFilter(BaseFilter):
         return result
 
 class SingleCellFilter(BaseFilter):
-    """单细胞筛选器"""
+    """
+    Single cell filter class.
+    """
     
-    def __init__(self, conn: connection, min_confidence: int = 2):
-        super().__init__(conn)
+    def __init__(self, conn: connection, min_confidence: int = 2, use_fallback: bool = True):
+        super().__init__(conn, "Single Cell Filter")
         self.min_confidence = min_confidence
+        self.use_fallback = use_fallback
     
     def apply(self, input_result: FilterResult) -> FilterResult:
-        """筛选单细胞数据"""
+        """
+        Filter single cell data.
+        """
+        warnings = self._validate_input(input_result)
+
         if input_result.data.empty:
-            return input_result
+            return FilterResult(
+                data=pd.DataFrame(),
+                count=0,
+                filter_name=self.name,
+                description="No input data",
+                warnings=warnings
+            )
+
+        def _execute():
+            filtered_df = input_result.data.copy()
+            strategy_used = "None"
+            
+            # Strategy 1: Use sc_conf_score if available
+            if 'sc_conf_score' in input_result.data.columns:
+                valid_scores = input_result.data['sc_conf_score'].notna()
+                if valid_scores.any():
+                    score_stats = input_result.data.loc[valid_scores, 'sc_conf_score'].describe()
+                    sc_mask = (
+                        input_result.data['sc_conf_score'].notna() & 
+                        (input_result.data['sc_conf_score'] >= self.min_confidence)
+                    )
+                    filtered_df = input_result.data[sc_mask].copy()
+                    strategy_used = f"sc_conf_score >= {self.min_confidence}"
+                    
+                    metadata = {
+                        'strategy': 'confidence_score',
+                        'min_confidence': self.min_confidence,
+                        'score_stats': score_stats.to_dict()
+                    }
+                    
+                    if len(filtered_df) > 0:
+                        return filtered_df, strategy_used, [], metadata
+                    else:
+                        warnings.append(f"No records with sc_conf_score >= {self.min_confidence}")
+            
+            # Strategy 2: Fallback to text-based detection
+            if self.use_fallback and len(filtered_df) == 0:
+                sc_tech_patterns = [
+                    r'10[xX]', r'\b10x\b', 'Chromium', 'SMART-seq2', 'Drop-seq',
+                    'microwell', 'C1\s?System', 'single cell', 'scRNA-seq',
+                    'snRNA-seq', 'CITE-seq', 'single-cell'
+                ]
+                
+                include_mask = pd.Series([False] * len(input_result.data), index=input_result.data.index)
+                text_columns = ['overall_design', 'library_strategy', 'summary', 'study_title']
+                
+                matched_patterns = []
+                for pattern in sc_tech_patterns:
+                    for col in text_columns:
+                        if col in input_result.data.columns:
+                            pattern_mask = input_result.data[col].str.contains(
+                                pattern, case=False, na=False, regex=True
+                            )
+                            if pattern_mask.any():
+                                matched_patterns.append(f"{pattern} in {col}")
+                                include_mask |= pattern_mask
+                
+                if include_mask.any():
+                    filtered_df = input_result.data[include_mask].copy()
+                    strategy_used = "Text pattern matching"
+                    metadata = {
+                        'strategy': 'text_patterns',
+                        'matched_patterns': matched_patterns,
+                        'searched_columns': text_columns
+                    }
+                else:
+                    warnings.append("No single-cell patterns found in text fields")
+                    metadata = {'strategy': 'failed'}
+            
+            return filtered_df, strategy_used, warnings, metadata
         
-        # 检查sc_conf_score字段是否存在
-        if 'sc_conf_score' not in input_result.data.columns:
-            logger.warning("sc_conf_score column not found, skipping single cell filter")
-            return input_result
-        
-        # 在内存中筛选
-        sc_mask = (
-            input_result.data['sc_conf_score'].notna() & 
-            (input_result.data['sc_conf_score'] >= self.min_confidence)
-        )
-        
-        filtered_df = input_result.data[sc_mask].copy()
+        result_data, strategy, new_warnings, metadata = _execute()
+        warnings.extend(new_warnings)
         
         result = FilterResult(
-            data=filtered_df,
-            count=len(filtered_df),
-            filter_name="Single Cell Filter",
-            description=f"Single cell confidence score >= {self.min_confidence}"
+            data=result_data,
+            count=len(result_data),
+            filter_name=self.name,
+            description=strategy,
+            warnings=warnings,
+            metadata=metadata
         )
         
         result.log_result(input_result.count)
         return result
 
 class SequencingStrategyFilter(BaseFilter):
-    """测序策略筛选器"""
+    """
+    Sequencing strategy filter class.
+    """
     
     def apply(self, input_result: FilterResult) -> FilterResult:
-        """筛选单细胞测序技术"""
+        """
+        Filter single cell sequencing technologies.
+        """
         if input_result.data.empty:
             return input_result
         
-        # 定义单细胞测序技术的关键词
+        # Define single cell sequencing technologies
         sc_tech_patterns = [
             r'10[xX]', r'\b10x\b', 'Chromium', 'SMART-seq2', 'Drop-seq', 
             'microwell', 'C1\s?System', 'Single cell sequencing', 'scRNA-seq', 
             'snRNA-seq', 'CITE-seq'
         ]
         
-        # 排除的关键词
+        # Exclude keywords
         exclude_patterns = ['bulk', 'microorganism', 'yeast', 'E\. coli', 'bulk RNA', 'tissue profiling']
         
-        # 在内存中筛选
+        # Filter records with single cell sequencing technologies in memory
         include_mask = pd.Series([False] * len(input_result.data), index=input_result.data.index)
         exclude_mask = pd.Series([False] * len(input_result.data), index=input_result.data.index)
         
@@ -255,27 +448,31 @@ class SequencingStrategyFilter(BaseFilter):
         return result
 
 class CancerStatusFilter(BaseFilter):
-    """癌症状态筛选器"""
+    """
+    Cancer status filter class.
+    """
     
     def apply(self, input_result: FilterResult) -> FilterResult:
-        """筛选癌症或正常样本"""
+        """
+        Filter cancer or normal samples.
+        """
         if input_result.data.empty:
             return input_result
         
-        # 癌症相关关键词
+        # Cancer-related keywords
         cancer_patterns = [
             'tumor', 'cancer', 'carcinoma', 'neoplasm', 'malignant', 'metastatic', 
             'onco', 'glioma', 'sarcoma', 'leukemia', 'lymphoma', 'adenocarcinoma', 
             'melanoma', 'osteosarcoma', 'neuroblastoma'
         ]
         
-        # 正常样本关键词
+        # Normal sample keywords
         normal_patterns = [
             'normal', 'non-?tumor', 'healthy', 'control', 'donor', 'peripheral blood', 
             'adjacent normal', 'para-tumor', 'healthy donor'
         ]
         
-        # 在内存中筛选
+        # Filter records with cancer or normal samples in memory
         cancer_mask = pd.Series([False] * len(input_result.data), index=input_result.data.index)
         normal_mask = pd.Series([False] * len(input_result.data), index=input_result.data.index)
         
@@ -305,14 +502,18 @@ class CancerStatusFilter(BaseFilter):
         return result
 
 class TissueSourceFilter(BaseFilter):
-    """组织来源筛选器"""
+    """
+    Tissue source filter class.
+    """
     
     def apply(self, input_result: FilterResult) -> FilterResult:
-        """筛选来自主要组织系统的样本，排除细胞系"""
+        """
+        Filter samples from major tissue systems, excluding cell lines.
+        """
         if input_result.data.empty:
             return input_result
         
-        # 主要组织系统关键词
+        # Major tissue system keywords
         tissue_patterns = [
             # Neural
             r'\b(brain|cerebral|hippocampus|cortex|striatum|cerebellum|spinal cord|retina|optic nerve|glia|neuron)\b',
@@ -340,12 +541,12 @@ class TissueSourceFilter(BaseFilter):
             r'\b(bone|cartilage|osteoblast|osteoclast|chondrocyte|joint|ligament|tendon)\b'
         ]
         
-        # 细胞系排除关键词
+        # Exclude cell line keywords
         cell_line_patterns = [
             r'\b(cell line|immortalized|HEK293|HeLa|Jurkat|CHO|NIH/3T3|K562|U2OS|HEPG2|A549)\b'
         ]
         
-        # 在内存中筛选
+        # Filter records with primary tissue samples in memory
         tissue_mask = pd.Series([False] * len(input_result.data), index=input_result.data.index)
         cell_line_mask = pd.Series([False] * len(input_result.data), index=input_result.data.index)
         
@@ -375,18 +576,22 @@ class TissueSourceFilter(BaseFilter):
         return result
 
 class KeywordSearchFilter(BaseFilter):
-    """关键词搜索筛选器"""
+    """
+    Keyword search filter class.
+    """
     
     def __init__(self, conn: connection, search_term: Optional[str]):
         super().__init__(conn)
         self.search_term = search_term
     
     def apply(self, input_result: FilterResult) -> FilterResult:
-        """根据关键词筛选"""
+        """
+        Filter records based on keywords.
+        """
         if input_result.data.empty or not self.search_term or not self.search_term.strip():
             return input_result
         
-        # 在内存中搜索
+        # Search records in memory
         search_mask = pd.Series([False] * len(input_result.data), index=input_result.data.index)
         search_columns = ['study_title', 'summary', 'gse_title']
         
@@ -409,18 +614,22 @@ class KeywordSearchFilter(BaseFilter):
         return result
 
 class LimitFilter(BaseFilter):
-    """记录数限制筛选器"""
+    """
+    Limit filter class.
+    """
     
     def __init__(self, conn: connection, limit: int):
         super().__init__(conn)
         self.limit = limit
     
     def apply(self, input_result: FilterResult) -> FilterResult:
-        """限制返回记录数"""
+        """
+        Limit the number of records returned.
+        """
         if input_result.data.empty or self.limit <= 0:
             return input_result
         
-        # 按提交日期排序并限制记录数
+        # Sort by submission date and limit the number of records
         sorted_df = input_result.data.copy()
         if 'gsm_submission_date' in sorted_df.columns:
             sorted_df = sorted_df.sort_values('gsm_submission_date', ascending=False, na_position='last')
@@ -437,13 +646,15 @@ class LimitFilter(BaseFilter):
         result.log_result(input_result.count)
         return result
 
-# 便利函数：创建筛选器链
+# Convenience function: create filter chain
 def create_filter_chain(conn: connection, 
                        organisms: List[str] = ["human"],
                        search_term: Optional[str] = None,
                        limit: int = 100,
                        min_sc_confidence: int = 2) -> List[BaseFilter]:
-    """创建预筛选器链"""
+    """
+    Create a prefilter chain.
+    """
     return [
         InitialDatasetFilter(conn),
         BasicAvailabilityFilter(conn),
@@ -457,7 +668,9 @@ def create_filter_chain(conn: connection,
     ]
 
 def apply_filter_chain(filter_chain: List[BaseFilter]) -> FilterResult:
-    """应用筛选器链"""
+    """
+    Apply a prefilter chain.
+    """
     print("🔍 Starting Stepwise Prefiltering Process")
     print("=" * 50)
     
@@ -470,4 +683,162 @@ def apply_filter_chain(filter_chain: List[BaseFilter]) -> FilterResult:
     
     print("=" * 50)
     print(f"📈 Final result: {result.count:,} records")
+    return result
+
+class FilterChainManager:
+    """
+    Manages filter cchains with reporting and debugging
+    """
+
+    def __init__(self, conn: connection):
+        self.conn = conn
+        self.execution_history: List[Dict[str, Any]] = []
+    
+    def create_standard_chain(self, 
+                            organisms: List[str] = ["human"],
+                            search_term: Optional[str] = None,
+                            limit: int = 100,
+                            min_sc_confidence: int = 2,
+                            use_sc_fallback: bool = True) -> List[BaseFilter]:
+        """
+        Create a standard filter chain with enhanced options.
+        """
+        return [
+            InitialDatasetFilter(self.conn),
+            BasicAvailabilityFilter(self.conn),
+            OrganismFilter(self.conn, organisms),
+            SingleCellFilter(self.conn, min_sc_confidence, use_sc_fallback),
+            SequencingStrategyFilter(self.conn),
+            CancerStatusFilter(self.conn),
+            TissueSourceFilter(self.conn),
+            KeywordSearchFilter(self.conn, search_term),
+            LimitFilter(self.conn, limit)
+        ]
+    
+    def apply_chain(self, filter_chain: List[BaseFilter], 
+                   stop_on_empty: bool = True,
+                   show_summary: bool = True) -> FilterResult:
+        """
+        Apply filter chain with enhanced reporting.
+        """
+        print("🔍 Starting Enhanced Stepwise Prefiltering Process")
+        print("=" * 60)
+        
+        start_time = datetime.now()
+        result = None
+        chain_history = []
+        
+        for i, filter_obj in enumerate(filter_chain, 1):
+            print(f"Step {i}: {filter_obj.name}")
+            print("-" * 40)
+            
+            step_start = datetime.now()
+            result = filter_obj.apply(result)
+            step_end = datetime.now()
+            
+            step_summary = result.get_summary()
+            step_summary['step_number'] = i
+            step_summary['step_duration'] = (step_end - step_start).total_seconds()
+            chain_history.append(step_summary)
+            
+            if result.count == 0 and stop_on_empty:
+                print("⚠️  No records remaining after this filter. Stopping chain.")
+                break
+        
+        end_time = datetime.now()
+        total_time = (end_time - start_time).total_seconds()
+        
+        # Store execution history
+        execution_record = {
+            'timestamp': start_time.isoformat(),
+            'total_duration': total_time,
+            'final_count': result.count if result else 0,
+            'chain_history': chain_history
+        }
+        self.execution_history.append(execution_record)
+        
+        if show_summary:
+            self._print_summary(chain_history, total_time, result)
+        
+        return result
+    
+    def _print_summary(self, chain_history: List[Dict], total_time: float, final_result: FilterResult):
+        """
+        Print execution summary.
+        """
+        print("=" * 60)
+        print(f"📈 EXECUTION SUMMARY")
+        print("=" * 60)
+        print(f"Total execution time: {total_time:.2f}s")
+        print(f"Final result: {final_result.count:,} records")
+        print(f"Total reduction: {chain_history[0]['count'] - final_result.count:,} records")
+        
+        # Show step-by-step breakdown
+        print("\n📊 Step-by-step breakdown:")
+        for step in chain_history:
+            print(f"  {step['step_number']:2d}. {step['filter_name']:<20} "
+                  f"{step['count']:>6,} records "
+                  f"({step['reduction_pct']:>5.1f}% reduction, "
+                  f"{step['step_duration']:>5.2f}s)")
+        
+        # Show warnings summary
+        all_warnings = []
+        for step in chain_history:
+            all_warnings.extend(step.get('warnings', []))
+        
+        if all_warnings:
+            print(f"\n⚠️  Total warnings: {len(all_warnings)}")
+            for warning in all_warnings[:5]:  # Show first 5 warnings
+                print(f"   • {warning}")
+            if len(all_warnings) > 5:
+                print(f"   ... and {len(all_warnings) - 5} more")
+    
+    def get_execution_stats(self) -> Dict[str, Any]:
+        """
+        Get statistics about filter chain executions.
+        """
+        if not self.execution_history:
+            return {}
+        
+        recent_executions = self.execution_history[-10:]  # Last 10 executions
+        
+        avg_time = sum(exec['total_duration'] for exec in recent_executions) / len(recent_executions)
+        avg_final_count = sum(exec['final_count'] for exec in recent_executions) / len(recent_executions)
+        
+        return {
+            'total_executions': len(self.execution_history),
+            'avg_execution_time': avg_time,
+            'avg_final_count': avg_final_count,
+            'last_execution': self.execution_history[-1] if self.execution_history else None
+        }
+
+# Usage example:
+def example_enhanced_usage():
+    """
+    Example of using the enhanced prefilter system.
+    """
+    
+    # Initialize chain manager
+    manager = FilterChainManager(conn)
+    
+    # Create enhanced chain with fallback options
+    filter_chain = manager.create_standard_chain(
+        organisms=["human"],
+        search_term="cancer",
+        limit=50,
+        min_sc_confidence=1,  # Lower threshold
+        use_sc_fallback=True  # Enable text-based fallback
+    )
+    
+    # Apply with enhanced reporting
+    result = manager.apply_chain(
+        filter_chain, 
+        stop_on_empty=False,  # Continue even if a filter returns 0 records
+        show_summary=True
+    )
+    
+    # Get execution statistics
+    stats = manager.get_execution_stats()
+    print(f"\n📊 Execution Statistics: {stats}")
+    
     return result
