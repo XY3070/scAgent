@@ -34,67 +34,6 @@ def db_connect() -> connection:
     }
     return psycopg2.connect(**db_params)
 
-# def get_db_certs(certs=["server-ca.pem", "client-cert.pem", "client-key.pem"]) -> dict:
-#     """
-#     Download certificates from GCP Secret Manager and save them to temporary files.
-#     Args:
-#         certs: A list of certificate ids
-#     Returns:
-#         A dictionary containing the paths to the temporary files
-#     """
-#     idx = {
-#         "server-ca.pem": "SRAgent_db_server_ca",
-#         "client-cert.pem": "SRAgent_db_client_cert",
-#         "client-key.pem": "SRAgent_db_client_key"
-#     }
-#     cert_files = {}
-#     for cert in certs:
-#         cert_files[cert] = download_secret(idx[cert])
-#     return cert_files
-
-# def download_secret(secret_id: str) -> str:
-#     """
-#     Download a secret from GCP Secret Manager and save it to a temporary file.
-#     Args:
-#         secret_id: The secret id
-#     Returns:
-#         The path to the temporary file containing the secret
-#     """
-#     secret_value = get_secret(secret_id)
-#     temp_file = NamedTemporaryFile(delete=False, mode='w', encoding='utf-8')
-#     with temp_file as f:
-#         f.write(secret_value)
-#         f.flush()
-#     return temp_file.name
-
-# def get_secret(secret_id: str) -> str:
-#     """
-#     Fetch secret from GCP Secret Manager. Falls back to environment variable if secret cannot be obtained.
-#     Required environment variables: GCP_PROJECT_ID, GOOGLE_APPLICATION_CREDENTIALS
-#     Args:
-#         secret_id: The secret id
-#     Returns:
-#         The secret value
-#     """
-#     try:
-#         from google.auth import default
-#         from google.cloud import secretmanager
-
-#         _, project_id = default()  # Use default credentials; project_id is inferred
-#         if not project_id:
-#             project_id = os.environ["GCP_PROJECT_ID"]
-#         name = f"projects/{project_id}/secrets/{secret_id}/versions/latest"
-#         client = secretmanager.SecretManagerServiceClient()
-#         response = client.access_secret_version(request={"name": name})
-#         return response.payload.data.decode('UTF-8')
-#     except Exception as e:
-#         # Fall back to environment variable
-#         env_var = os.getenv(secret_id)
-#         if env_var is not None:
-#             return env_var
-#         raise Exception(f"Failed to get secret '{secret_id}' from Secret Manager and environment variable not set") from e
-
-
 # main
 if __name__ == '__main__':
     from dotenv import load_dotenv
@@ -102,5 +41,5 @@ if __name__ == '__main__':
 
     with db_connect() as conn:
        print(conn)
-       print("成功连接到数据库")
+       print("Connection established successfully.")
     
