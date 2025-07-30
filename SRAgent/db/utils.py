@@ -113,10 +113,10 @@ def execute_query(stmt, conn: connection) -> Optional[List[Tuple]]:
         # This error occurs when CREATE TABLE is executed without IF NOT EXISTS
         # and the table already exists. We can safely ignore it.
         pass
-        return None
+        return []
     except psycopg2.ProgrammingError as e:
         print(f"SQL Programming Error: {e}")
-        return None
+        return []
     except psycopg2.Error as e:  
         print(f"Database Error: {e}")
         conn.rollback() 

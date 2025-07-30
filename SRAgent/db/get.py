@@ -9,25 +9,51 @@ from psycopg2.extensions import connection
 import logging
 
 # import prefilter module
-from .prefilter import (
-    FilterResult, 
-    create_filter_chain, 
-    apply_filter_chain,
-    InitialDatasetFilter,
-    BasicAvailabilityFilter,
-    OrganismFilter,
-    SingleCellFilter,
-    SequencingStrategyFilter,
-    CancerStatusFilter,
-    TissueSourceFilter,
-    KeywordSearchFilter,
-    LimitFilter
-)
-
-# Keep all original database utility functions
-from .utils import execute_query
+# Fix relative import issue
+try:
+    # Try relative import first (when used as module)
+    from .prefilter import (
+        FilterResult, 
+        create_filter_chain, 
+        apply_filter_chain,
+        InitialDatasetFilter,
+        BasicAvailabilityFilter,
+        OrganismFilter,
+        SingleCellFilter,
+        SequencingStrategyFilter,
+        CancerStatusFilter,
+        TissueSourceFilter,
+        KeywordSearchFilter,
+        LimitFilter
+    )
+    from .utils import execute_query
+except ImportError:
+    # Fallback for direct execution
+    try:
+        from prefilter import (
+            FilterResult, 
+            create_filter_chain, 
+            apply_filter_chain,
+            InitialDatasetFilter,
+            BasicAvailabilityFilter,
+            OrganismFilter,
+            SingleCellFilter,
+            SequencingStrategyFilter,
+            CancerStatusFilter,
+            TissueSourceFilter,
+            KeywordSearchFilter,
+            LimitFilter
+        )
+        try:
+            from utils import execute_query
+        except ImportError:
+            from .utils import execute_query
+    except ImportError:
+        print("❌ Cannot import prefilter module. Please check your setup.")
+        sys.exit(1)
 
 logger = logging.getLogger(__name__)
+
 
 def execute_query_with_cursor(conn, query, params):
     """
@@ -256,15 +282,23 @@ def db_get_eval(conn: connection, dataset_ids: List[str]) -> pd.DataFrame:
     Returns:
         List of entrez_id values of SRX records that have not been processed.
     """
-    tbl = Table("eval")
-    stmt = Query \
-        .from_(tbl) \
-        .select(tbl.dataset_id) \
-        .distinct() \
-        .where(tbl.dataset_id.isin(dataset_ids))
-        
-    # Fetch the results and return a list of {target_column} values
-    return [row[0] for row in execute_query(stmt, conn)]
+    try:
+        tbl = Table("eval")
+        stmt = Query \
+            .from_(tbl) \
+            .select(tbl.dataset_id) \
+            .distinct() \
+            .where(tbl.dataset_id.isin(dataset_ids))
+            
+        # Fetch the results and return a list of {target_column} values
+        results = execute_query(stmt, conn)
+        if results is None: 
+            logger.warning("eval table does not exist or query retured None")
+            return []
+        return [row[0] for row in results]
+    except Exception as e:
+        logger.error(f"Error querying eval table: {e}")
+        return []
 
 def db_get_table_data(conn: connection, table_name: str) -> pd.DataFrame:
     """
@@ -519,7 +553,19 @@ def example_usage():
     Show how to use the new prefiltering system
     """
     from dotenv import load_dotenv
-    from .connect import db_connect
+    try:
+        from connect import db_connect
+    except ImportError:
+        try:
+            import sys
+            import os
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            project_root = os.path.dirname(os.path.dirname(current_dir))
+            sys.path.insert(0, project_root)
+            from SRAgent.db.connect import db_connect
+        except ImportError:
+            print("Cannot import db_connect. Please check import paths.")
+            return
     
     load_dotenv()
     
@@ -564,26 +610,69 @@ def example_usage():
 if __name__ == "__main__":
     from dotenv import load_dotenv
     load_dotenv()
-    from SRAgent.db.connect import db_connect
+    
+    try:
+        from SRAgent.db.connect import db_connect
+    except ImportError:
+        try:
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            project_root = os.path.dirname(os.path.dirname(current_dir))
+            sys.path.insert(0, project_root)
+            from SRAgent.db.connect import db_connect
+        except ImportError:
+            print("Cannot import db_connect. Please check import paths.")
+            sys.exit(1)
     
     os.environ["DYNACONF"] = "test"
-    with db_connect() as conn:
-        # Run example
-        example_usage()
-        
-        # Original test code
-        print(db_get_eval(conn, ["eval1"]))
-        print(db_get_srx_records(conn))
-        print(db_get_unprocessed_records(conn))
-        print(len(db_get_srx_accessions(conn)))
+    try: 
+        with db_connect() as conn:
+            # Run example
+            example_usage()
+            
+            # Original test code with error handling 
+            print("=== Original test functions ===")
+            try:
+                eval_result = db_get_eval(conn, ["eval1"])
+                print("db_get_eval result:", eval_result)
+            except Exception as e:
+                print(f"db_get_eval error: {e}")
+
+            try:
+                srx_records = db_get_srx_records(conn)
+                print("db_get_srx_records count:", len(srx_records) if srx_records else 0)
+            except Exception as e:
+                print(f"db_get_srx_records error: {e}")
+
+            try:
+                unprocessed = db_get_unprocessed_records(conn)
+                print("db_get_unprocessed_records count:", len(unprocessed) if unprocessed else 0)
+            except Exception as e:
+                print(f"db_get_unprocessed_records error: {e}")
+
+            try:
+                srx_accessions = db_get_srx_accessions(conn)
+                print("srx_accessions count:", len(srx_accessions))
+            except Exception as e:
+                print(f"db_get_srx_accessions error: {e}")
+
+            try:
+                find_result = db_find_srx(["SRX19162973"], conn)
+                print("db_find_srx result shape:", find_result.shape if hasattr(find_result, 'shape') else len(find_result))
+            except Exception as e:
+                print(f"db_find_srx error: {e}")
+
+            #Example usage for the new function  
+            metadata = db_get_filtered_srx_metadata(
+                conn, 
+                organism="Homo sapiens",
+                is_single_cell="yes",
+                limit=100
+            )
+            print("Filtered metadata shape:", metadata.shape if hasattr(metadata, 'shape') else len(metadata))
+
+    except Exception as e:
+        print(f"Database connection error: {e}")
+        import traceback
+        traceback.print_exc()
         print(db_find_srx(["SRX19162973"], conn))
-        
-        # Example usage for the new function
-        metadata = db_get_filtered_srx_metadata(
-            conn,
-            organism="Homo sapiens",
-            is_single_cell="yes",
-            limit=100
-        )
-        print(metadata)
         
