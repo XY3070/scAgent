@@ -1,22 +1,63 @@
-# import
-## batteries
 import os
 import sys
 from typing import List, Dict, Any, Tuple, Optional, Set
-## 3rd party
 import psycopg2 
 import pandas as pd
 from pypika import Query, Table, Field, Column, Criterion
 from psycopg2.extras import execute_values
 from psycopg2.extensions import connection
-## package
-from SRAgent.db.utils import execute_query
 import logging
 
-# functions
+# import prefilter module
+# Fix relative import issue
+try:
+    # Try relative import first (when used as module)
+    from .prefilter import (
+        FilterResult, 
+        create_filter_chain, 
+        apply_filter_chain,
+        InitialDatasetFilter,
+        BasicAvailabilityFilter,
+        OrganismFilter,
+        SingleCellFilter,
+        SequencingStrategyFilter,
+        CancerStatusFilter,
+        TissueSourceFilter,
+        KeywordSearchFilter,
+        LimitFilter
+    )
+    from .utils import execute_query
+except ImportError:
+    # Fallback for direct execution
+    try:
+        from prefilter import (
+            FilterResult, 
+            create_filter_chain, 
+            apply_filter_chain,
+            InitialDatasetFilter,
+            BasicAvailabilityFilter,
+            OrganismFilter,
+            SingleCellFilter,
+            SequencingStrategyFilter,
+            CancerStatusFilter,
+            TissueSourceFilter,
+            KeywordSearchFilter,
+            LimitFilter
+        )
+        try:
+            from utils import execute_query
+        except ImportError:
+            from .utils import execute_query
+    except ImportError:
+        print("❌ Cannot import prefilter module. Please check your setup.")
+        sys.exit(1)
+
+logger = logging.getLogger(__name__)
+
+
 def execute_query_with_cursor(conn, query, params):
     """
-    修复版本：正确处理数据库查询和结果
+    Handle database query and results.
     """
     try:
         cursor = conn.cursor()
@@ -40,6 +81,7 @@ def execute_query_with_cursor(conn, query, params):
             pass
         return pd.DataFrame()
 
+# Keep all original functions
 def db_find_srx(srx_accessions: List[str], conn: connection) -> pd.DataFrame:
     """
     Get SRX records on the database
@@ -240,15 +282,23 @@ def db_get_eval(conn: connection, dataset_ids: List[str]) -> pd.DataFrame:
     Returns:
         List of entrez_id values of SRX records that have not been processed.
     """
-    tbl = Table("eval")
-    stmt = Query \
-        .from_(tbl) \
-        .select(tbl.dataset_id) \
-        .distinct() \
-        .where(tbl.dataset_id.isin(dataset_ids))
-        
-    # Fetch the results and return a list of {target_column} values
-    return [row[0] for row in execute_query(stmt, conn)]
+    try:
+        tbl = Table("eval")
+        stmt = Query \
+            .from_(tbl) \
+            .select(tbl.dataset_id) \
+            .distinct() \
+            .where(tbl.dataset_id.isin(dataset_ids))
+            
+        # Fetch the results and return a list of {target_column} values
+        results = execute_query(stmt, conn)
+        if results is None: 
+            logger.warning("eval table does not exist or query retured None")
+            return []
+        return [row[0] for row in results]
+    except Exception as e:
+        logger.error(f"Error querying eval table: {e}")
+        return []
 
 def db_get_table_data(conn: connection, table_name: str) -> pd.DataFrame:
     """
@@ -265,187 +315,215 @@ def db_get_table_data(conn: connection, table_name: str) -> pd.DataFrame:
         .select("*")
     return pd.read_sql(str(stmt), conn)
 
+# New prefilter function, using independent filter module
+def get_prefiltered_datasets_functional(
+    conn: connection,
+    organisms: List[str] = ["human"],
+    search_term: Optional[str] = None,
+    limit: int = 100,
+    min_sc_confidence: int = 2,
+    create_temp_table: bool = False,
+    temp_table_name: str = "temp_prefiltered_results"
+) -> pd.DataFrame:
+    """
+    Prefilter datasets using a functional prefiltering approach, where each filter
+    accepts an object and returns a new filtered object.
+    
+    Args:
+        conn: Database connection
+        organisms: List of organisms, default ["human"]
+        search_term: Search keyword
+        limit: Limit on the number of records returned
+        min_sc_confidence: Minimum single-cell confidence score
+        create_temp_table: Whether to create a temporary table
+        temp_table_name: Name of the temporary table
+    
+    Returns:
+        Prefiltered DataFrame
+    """
+    try:
+        # Create filter chain
+        filter_chain = create_filter_chain(
+            conn=conn,
+            organisms=organisms,
+            search_term=search_term,
+            limit=limit,
+            min_sc_confidence=min_sc_confidence
+        )
+        
+        # Apply filter chain
+        final_result = apply_filter_chain(filter_chain)
+        
+        # If needed, create temporary table
+        if create_temp_table and not final_result.data.empty:
+            create_temporary_table(conn, final_result.data, temp_table_name)
+        
+        return final_result.data
+        
+    except Exception as e:
+        logger.error(f"Prefiltering failed: {e}")
+        return pd.DataFrame()
+
+def get_prefiltered_datasets_custom_chain(
+    conn: connection,
+    custom_filters: List[str],
+    filter_params: Dict[str, Any] = None
+) -> pd.DataFrame:
+    """
+    Prefilter datasets using a custom filter chain.
+    
+    Args:
+        conn: Database connection
+        custom_filters: List of custom filter names
+        filter_params: Dictionary of filter parameters
+    
+    Returns:
+        Prefiltered DataFrame
+    """
+    if filter_params is None:
+        filter_params = {}
+    
+    # Map filter names to classes
+    filter_map = {
+        'initial': InitialDatasetFilter,
+        'basic': BasicAvailabilityFilter,
+        'organism': OrganismFilter,
+        'single_cell': SingleCellFilter,
+        'sequencing': SequencingStrategyFilter,
+        'cancer': CancerStatusFilter,
+        'tissue': TissueSourceFilter,
+        'keyword': KeywordSearchFilter,
+        'limit': LimitFilter
+    }
+    
+    try:
+        # Build custom filter chain
+        filter_chain = []
+        result = None
+        
+        for filter_name in custom_filters:
+            if filter_name not in filter_map:
+                logger.warning(f"Unknown filter: {filter_name}")
+                continue
+            
+            filter_class = filter_map[filter_name]
+            
+            # Create instance based on filter type
+            if filter_name == 'organism':
+                filter_obj = filter_class(conn, filter_params.get('organisms', ['human']))
+            elif filter_name == 'single_cell':
+                filter_obj = filter_class(conn, filter_params.get('min_sc_confidence', 2))
+            elif filter_name == 'keyword':
+                filter_obj = filter_class(conn, filter_params.get('search_term'))
+            elif filter_name == 'limit':
+                filter_obj = filter_class(conn, filter_params.get('limit', 100))
+            else:
+                filter_obj = filter_class(conn)
+            
+            # Apply filter
+            result = filter_obj.apply(result)
+            
+            if result.count == 0:
+                logger.warning("No records remaining after filter: " + filter_name)
+                break
+        
+        return result.data if result else pd.DataFrame()
+        
+    except Exception as e:
+        logger.error(f"Custom chain filtering failed: {e}")
+        return pd.DataFrame()
+
+def create_temporary_table(conn: connection, df: pd.DataFrame, table_name: str):
+    """
+    Create a temporary table and insert prefiltered results.
+    
+    Args:
+        conn: Database connection
+        df: DataFrame to insert
+        table_name: Name of the temporary table
+    """
+    try:
+        cursor = conn.cursor()
+        
+        # Delete existing temporary table
+        cursor.execute(f"DROP TABLE IF EXISTS {table_name}")
+        
+        # Create temporary table structure (based on DataFrame columns)
+        columns_def = []
+        for col in df.columns:
+            # Simple type mapping, can be expanded as needed
+            if df[col].dtype == 'object':
+                columns_def.append(f'"{col}" TEXT')
+            elif df[col].dtype == 'int64':
+                columns_def.append(f'"{col}" INTEGER')
+            elif df[col].dtype == 'float64':
+                columns_def.append(f'"{col}" REAL')
+            else:
+                columns_def.append(f'"{col}" TEXT')
+        
+        create_sql = f"CREATE TEMP TABLE {table_name} ({', '.join(columns_def)})"
+        cursor.execute(create_sql)
+        
+        # Insert data
+        if not df.empty:
+            # Prepare insert statement
+            placeholders = ', '.join(['%s'] * len(df.columns))
+            insert_sql = f"INSERT INTO {table_name} VALUES ({placeholders})"
+            
+            # Convert DataFrame to list of tuples
+            data_tuples = [tuple(row) for row in df.values]
+            
+            # Batch insert
+            cursor.executemany(insert_sql, data_tuples)
+        
+        conn.commit()
+        cursor.close()
+        
+        logger.info(f"Created temporary table '{table_name}' with {len(df)} records")
+        
+    except Exception as e:
+        logger.error(f"Failed to create temporary table: {e}")
+        try:
+            cursor.close()
+        except:
+            pass
+
+# Retain original function's compatibility version
 async def get_prefiltered_datasets_from_local_db(
     conn,
     organisms: list,
-    min_date: str,
-    max_date: str,
     search_term: str,
     limit: int = 100
 ) -> list:
     """
-    最终工作版本 - 只使用确认存在的字段
+    Compatibility version of original prefiltering function, now using new functional filters
+    Maintains compatibility with existing code
     """
-    
-    # 基础查询 - 只使用我们知道存在的字段
-    base_query = """
-        SELECT "sra_ID", study_title, summary, overall_design, scientific_name, 
-               library_strategy, technology, characteristics_ch1, gse_title, gsm_title,
-               organism_ch1, source_name_ch1, common_name, gsm_submission_date
-        FROM merged.sra_geo_ft
-        WHERE 1=1
-    """
-    
-    conditions = []
-    params = []
-    
-    # 1. 物种筛选
-    if organisms and "human" in organisms:
-        human_condition = """
-        AND (organism_ch1 ILIKE %s OR scientific_name ILIKE %s OR organism ILIKE %s 
-             OR source_name_ch1 ILIKE %s OR common_name ILIKE %s)
-        """
-        conditions.append(human_condition)
-        params.extend(['%homo sapiens%', '%homo sapiens%', '%homo sapiens%', '%human%', '%human%'])
-    
-    # 2. 单细胞筛选 - 优化关键词
-    sc_keywords = ['%scRNA%', '%single cell%', '%10x%', '%droplet%', '%Smart-seq%']
-    sc_fields = ['library_strategy', 'technology', 'characteristics_ch1', 'summary', 'overall_design']
-    
-    # 构建单细胞条件
-    sc_conditions_list = []
-    for field in sc_fields:
-        for keyword in sc_keywords:
-            sc_conditions_list.append(f"{field} ILIKE %s")
-            params.append(keyword)
-    
-    if sc_conditions_list:
-        sc_condition = "AND (" + " OR ".join(sc_conditions_list) + ")"
-        conditions.append(sc_condition)
-    
-    # 3. 基本数据可用性
-    conditions.append('AND "sra_ID" IS NOT NULL AND "sra_ID" != \'\' AND gse_title IS NOT NULL')
-    
-    # 4. 日期筛选 - 简化版本
-    if min_date and min_date.strip() and min_date != '0000-00-00':
-        conditions.append('AND gsm_submission_date::date >= %s')
-        params.append(min_date)
-    if max_date and max_date.strip() and max_date != '0000-00-00':
-        conditions.append('AND gsm_submission_date::date <= %s')
-        params.append(max_date)
-    
-    # 5. 关键词筛选 - 只使用确认存在的字段
-    if search_term and search_term.strip():
-        keyword_condition = """
-        AND (COALESCE(study_title, '') ILIKE %s 
-             OR COALESCE(summary, '') ILIKE %s 
-             OR COALESCE(gse_title, '') ILIKE %s)
-        """
-        conditions.append(keyword_condition)
-        search_pattern = f"%{search_term}%"
-        params.extend([search_pattern, search_pattern, search_pattern])
-    
-    # 组装完整查询
-    full_query = base_query + ' '.join(conditions) + f"""
-        ORDER BY gsm_submission_date DESC NULLS LAST
-        LIMIT {limit}
-    """
-    
-    print(f"🔍 查询参数数量: {len(params)}, 占位符数量: {full_query.count('%s')}")
-    
     try:
-        df = execute_query_with_cursor(conn, full_query, tuple(params))
+        # Call new functional prefiltering method   
+        result_df = get_prefiltered_datasets_functional(
+            conn=conn,
+            organisms=organisms,
+            search_term=search_term,
+            limit=limit
+        )
         
-        if df.empty:
-            print("查询执行成功但没有找到匹配的记录")
+        if result_df.empty:
+            logger.info("No records found with current filters")
             return []
         
-        records = df.to_dict(orient='records')
-        print(f"✅ 成功找到 {len(records)} 条记录")
+        # Convert to original format (list of dictionaries)
+        records = result_df.to_dict(orient='records')
+        logger.info(f"Successfully found {len(records)} records")
         return records
-            
+        
     except Exception as e:
-        print(f"❌ 查询执行错误: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"Prefiltering error: {e}")
         return []
 
-
-# 单细胞专用函数 - 也移除不存在的字段
-async def get_single_cell_datasets_from_local_db(
-    conn,
-    organisms: list,
-    min_date: str,
-    max_date: str,
-    search_term: str,
-    limit: int = 100
-) -> list:
-    """
-    单细胞专用函数 - 修复版本
-    """
-    
-    base_query = """
-        SELECT "sra_ID", study_title, summary, overall_design, scientific_name, 
-               library_strategy, technology, characteristics_ch1, gse_title, gsm_title,
-               organism_ch1, source_name_ch1, common_name, gsm_submission_date
-        FROM merged.sra_geo_ft
-        WHERE 1=1
-    """
-    
-    conditions = []
-    params = []
-    
-    # 1. 物种筛选
-    if organisms and "human" in organisms:
-        conditions.append("AND (organism_ch1 ILIKE %s OR scientific_name ILIKE %s)")
-        params.extend(['%homo sapiens%', '%homo sapiens%'])
-    
-    # 2. 严格的单细胞筛选
-    strict_sc_conditions = [
-        "library_strategy ILIKE %s",  # scRNA-seq
-        "library_strategy ILIKE %s",  # single cell
-        "technology ILIKE %s",        # 10x
-        "technology ILIKE %s",        # 10X  
-        "characteristics_ch1 ILIKE %s", # single cell
-        "summary ILIKE %s",           # single cell
-        "overall_design ILIKE %s"     # single cell
-    ]
-    
-    sc_keywords = ['%scRNA%', '%single cell%', '%10x%', '%10X%', '%single cell%', '%single cell%', '%single cell%']
-    
-    conditions.append("AND (" + " OR ".join(strict_sc_conditions) + ")")
-    params.extend(sc_keywords)
-    
-    # 3. 数据质量筛选
-    conditions.append('AND "sra_ID" IS NOT NULL AND gse_title IS NOT NULL')
-    
-    # 4. 日期筛选
-    if min_date and min_date.strip():
-        conditions.append('AND gsm_submission_date::date >= %s')
-        params.append(min_date)
-    if max_date and max_date.strip():
-        conditions.append('AND gsm_submission_date::date <= %s')
-        params.append(max_date)
-    
-    # 5. 关键词筛选
-    if search_term and search_term.strip():
-        conditions.append("AND (study_title ILIKE %s OR summary ILIKE %s)")
-        search_pattern = f"%{search_term}%"
-        params.extend([search_pattern, search_pattern])
-    
-    full_query = base_query + ' '.join(conditions) + f" ORDER BY gsm_submission_date DESC LIMIT {limit}"
-    
-    print(f"🧬 单细胞专用查询: 参数{len(params)}个, 占位符{full_query.count('%s')}个")
-    
-    try:
-        df = execute_query_with_cursor(conn, full_query, tuple(params))
-        
-        if df.empty:
-            return []
-        
-        records = df.to_dict(orient='records')
-        print(f"🧬 找到 {len(records)} 条单细胞数据")
-        return records
-            
-    except Exception as e:
-        print(f"❌ 单细胞查询错误: {e}")
-        return []
-
-
-# 创建一个检查表结构的辅助函数
 def check_table_structure(conn):
     """
-    检查表结构，确认哪些字段真正存在
+    Check the table structure and confirm which fields actually exist
     """
     try:
         cursor = conn.cursor()
@@ -459,81 +537,142 @@ def check_table_structure(conn):
         columns = [row[0] for row in cursor.fetchall()]
         cursor.close()
         
-        print("📊 数据库表中实际存在的字段:")
+        print("📊 Actual fields existing in the database table:")
         for i, col in enumerate(columns, 1):
             print(f"  {i:2d}. {col}")
         
         return columns
         
     except Exception as e:
-        print(f"❌ 检查表结构失败: {e}")
+        print(f"❌ Failed to check table structure: {e}")
         return []
 
-
-# 最简化的测试查询
-async def simple_test_query(conn):
+# Example usage function
+def example_usage():
     """
-    最简化的测试，确保基本功能正常
+    Show how to use the new prefiltering system
     """
+    from dotenv import load_dotenv
     try:
-        print("🧪 执行最简化测试查询...")
+        from connect import db_connect
+    except ImportError:
+        try:
+            import sys
+            import os
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            project_root = os.path.dirname(os.path.dirname(current_dir))
+            sys.path.insert(0, project_root)
+            from SRAgent.db.connect import db_connect
+        except ImportError:
+            print("Cannot import db_connect. Please check import paths.")
+            return
+    
+    load_dotenv()
+    
+    with db_connect() as conn:
+        print("=== Example 1: Standard prefiltering process ===")
+        result1 = get_prefiltered_datasets_functional(
+            conn=conn,
+            organisms=["human"],
+            search_term="cancer",
+            limit=10
+        )
+        print(f"Result 1: {len(result1)} records\n")
         
-        simple_query = """
-        SELECT "sra_ID", study_title, scientific_name
-        FROM merged.sra_geo_ft
-        WHERE "sra_ID" IS NOT NULL
-        AND study_title ILIKE %s
-        LIMIT 5
-        """
+        print("=== Example 2: Custom filter chain ===")
+        result2 = get_prefiltered_datasets_custom_chain(
+            conn=conn,
+            custom_filters=['initial', 'basic', 'organism', 'keyword', 'limit'],
+            filter_params={
+                'organisms': ['human'],
+                'search_term': 'brain',
+                'limit': 5
+            }
+        )
+        print(f"Result 2: {len(result2)} records\n")
         
-        cursor = conn.cursor()
-        cursor.execute(simple_query, ('%cancer%',))
+        print("=== Example 3: Step-by-step manual filtering ===")
+        # Manually create filter chain, can stop or modify at any step
+        initial_filter = InitialDatasetFilter(conn)
+        basic_filter = BasicAvailabilityFilter(conn)
+        organism_filter = OrganismFilter(conn, ["human"])
+        sc_filter = SingleCellFilter(conn, min_confidence=2)
         
-        if cursor.description is None:
-            print("❌ 查询没有返回结果描述")
-            cursor.close()
-            return []
+        # Apply step-by-step
+        result = initial_filter.apply()
+        result = basic_filter.apply(result)
+        result = organism_filter.apply(result)
+        result = sc_filter.apply(result)
         
-        colnames = [desc[0] for desc in cursor.description]
-        results = cursor.fetchall()
-        cursor.close()
-        
-        print(f"✅ 简化查询成功，找到 {len(results)} 条记录")
-        
-        if results:
-            for i, row in enumerate(results):
-                record = dict(zip(colnames, row))
-                print(f"  {i+1}. {record['sra_ID']} - {record['study_title'][:60]}...")
-        
-        return results
-        
-    except Exception as e:
-        print(f"❌ 简化查询也失败: {e}")
-        import traceback
-        traceback.print_exc()
-        return []
-
+        print(f"Result 3: {result.count} records")
 
 # main
 if __name__ == "__main__":
     from dotenv import load_dotenv
     load_dotenv()
-    from SRAgent.db.connect import db_connect
+    
+    try:
+        from SRAgent.db.connect import db_connect
+    except ImportError:
+        try:
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            project_root = os.path.dirname(os.path.dirname(current_dir))
+            sys.path.insert(0, project_root)
+            from SRAgent.db.connect import db_connect
+        except ImportError:
+            print("Cannot import db_connect. Please check import paths.")
+            sys.exit(1)
     
     os.environ["DYNACONF"] = "test"
-    with db_connect() as conn:
-        print(db_get_eval(conn, ["eval1"]))
+    try: 
+        with db_connect() as conn:
+            # Run example
+            example_usage()
+            
+            # Original test code with error handling 
+            print("=== Original test functions ===")
+            try:
+                eval_result = db_get_eval(conn, ["eval1"])
+                print("db_get_eval result:", eval_result)
+            except Exception as e:
+                print(f"db_get_eval error: {e}")
 
-        print(db_get_srx_records(conn))
-        print(db_get_unprocessed_records(conn))
-        print(len(db_get_srx_accessions(conn)))
+            try:
+                srx_records = db_get_srx_records(conn)
+                print("db_get_srx_records count:", len(srx_records) if srx_records else 0)
+            except Exception as e:
+                print(f"db_get_srx_records error: {e}")
+
+            try:
+                unprocessed = db_get_unprocessed_records(conn)
+                print("db_get_unprocessed_records count:", len(unprocessed) if unprocessed else 0)
+            except Exception as e:
+                print(f"db_get_unprocessed_records error: {e}")
+
+            try:
+                srx_accessions = db_get_srx_accessions(conn)
+                print("srx_accessions count:", len(srx_accessions))
+            except Exception as e:
+                print(f"db_get_srx_accessions error: {e}")
+
+            try:
+                find_result = db_find_srx(["SRX19162973"], conn)
+                print("db_find_srx result shape:", find_result.shape if hasattr(find_result, 'shape') else len(find_result))
+            except Exception as e:
+                print(f"db_find_srx error: {e}")
+
+            #Example usage for the new function  
+            metadata = db_get_filtered_srx_metadata(
+                conn, 
+                organism="Homo sapiens",
+                is_single_cell="yes",
+                limit=100
+            )
+            print("Filtered metadata shape:", metadata.shape if hasattr(metadata, 'shape') else len(metadata))
+
+    except Exception as e:
+        print(f"Database connection error: {e}")
+        import traceback
+        traceback.print_exc()
         print(db_find_srx(["SRX19162973"], conn))
         
-        # Example usage for the new function
-        metadata = db_get_filtered_srx_metadata(
-            conn,
-            organism="Homo sapiens",
-            is_single_cell="yes",
-            limit=100
-        )
-        print(metadata)
