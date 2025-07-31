@@ -84,12 +84,12 @@ def execute_query_with_cursor(conn, query, params):
 # Keep all original functions
 def db_find_srx(srx_accessions: List[str], conn: connection) -> pd.DataFrame:
     """
-    Get SRX records on the database
+    Get the dataframe based on the given SRX accessions.
     Args:
         conn: Connection to the database.
-        database: Name of the database to query.
+        srx_accessions: List of SRX accessions to query.
     Returns:
-        List of entrez_id values of SRX records that have not been processed.
+        Dataframe of SRX records that have not been processed.
     """
     srx_metadata = Table("srx_metadata")
     stmt = Query \
@@ -101,14 +101,14 @@ def db_find_srx(srx_accessions: List[str], conn: connection) -> pd.DataFrame:
     df = pd.read_sql(str(stmt), conn)
     return df
 
-def db_get_srx_records(conn: connection, column: str="entrez_id", database: str="sra") -> List[int]:
+def db_get_srx_records(conn: connection, column: str="entrez_id", database: str="sra") -> Set[int]:
     """
-    Get the entrez_id values of all SRX records in the database.
+    Get the {column} values of all SRX records in the database. Default col is entrez_id.
     Args:
         conn: Connection to the database.
         database: Name of the database to query.
     Returns:
-        List of entrez_id values of SRX records that have not been processed.
+        Set of {column} values of SRX records that have not been processed. Default is entrez_id.
     """
     srx_metadata = Table("srx_metadata")
     target_column = getattr(srx_metadata, column)
@@ -221,7 +221,7 @@ def db_get_srx_accessions(
     conn: connection, database: str="sra"
     ) -> Set[int]:
     """
-    Get all SRX accessions in the screcounter database
+    Get a set of all SRX accessions in the screcounter database
     Args:
         conn: Connection to the database.
         database: Name of the sequence database (e.g., sra)
@@ -249,7 +249,7 @@ def db_get_entrez_ids(
     conn: connection, database: str="sra"
     ) -> Set[int]:
     """
-    Get all Entrez IDs in the screcounter database
+    Get a set of all Entrez IDs in the screcounter database
     Args:
         conn: Connection to the database.
         database: Name of the sequence database (e.g., sra)

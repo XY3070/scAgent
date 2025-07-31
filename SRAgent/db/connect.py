@@ -41,9 +41,5 @@ if __name__ == '__main__':
 
     with db_connect() as conn:
        print(conn)
-<<<<<<< HEAD
-       print("Database connection established!")
-=======
        print("Connection established successfully.")
->>>>>>> feature/feat_prefilter
     

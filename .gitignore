@@ -81,6 +81,7 @@ Thumbs.db
 
 # Environment variables file
 .env
+.venv
 
 # SRAgent specific
 test_db_connection.py
