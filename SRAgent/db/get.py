@@ -193,8 +193,6 @@ def db_get_filtered_srx_metadata(
             srx_metadata.srx_accession,
             srx_metadata.entrez_id,
             srx_metadata.organism,
-            srx_metadata.is_single_cell,
-            srx_metadata.tech_10x,
             srx_metadata.library_strategy,
             srx_metadata.library_source,
             srx_metadata.library_selection,
@@ -323,7 +321,10 @@ def get_prefiltered_datasets_functional(
     limit: int = 100,
     min_sc_confidence: int = 2,
     create_temp_table: bool = False,
-    temp_table_name: str = "temp_prefiltered_results"
+    temp_table_name: str = "temp_prefiltered_results",
+    save_to_db_table: bool = False,
+    db_table_name: str = "prefiltered_srx_data",
+    db_table_if_exists: str = "append"
 ) -> pd.DataFrame:
     """
     Prefilter datasets using a functional prefiltering approach, where each filter
@@ -358,6 +359,9 @@ def get_prefiltered_datasets_functional(
         if create_temp_table and not final_result.data.empty:
             create_temporary_table(conn, final_result.data, temp_table_name)
         
+        if save_to_db_table and not final_result.data.empty:
+            save_dataframe_to_db_table(conn, final_result.data, db_table_name, db_table_if_exists)
+
         return final_result.data
         
     except Exception as e:
@@ -367,7 +371,10 @@ def get_prefiltered_datasets_functional(
 def get_prefiltered_datasets_custom_chain(
     conn: connection,
     custom_filters: List[str],
-    filter_params: Dict[str, Any] = None
+    filter_params: Dict[str, Any] = None,
+    save_to_db_table: bool = False,
+    db_table_name: str = "prefiltered_srx_data",
+    db_table_if_exists: str = "append"
 ) -> pd.DataFrame:
     """
     Prefilter datasets using a custom filter chain.
@@ -427,6 +434,9 @@ def get_prefiltered_datasets_custom_chain(
                 logger.warning("No records remaining after filter: " + filter_name)
                 break
         
+        if save_to_db_table and result and not result.data.empty:
+            save_dataframe_to_db_table(conn, result.data, db_table_name, db_table_if_exists)
+
         return result.data if result else pd.DataFrame()
         
     except Exception as e:
@@ -488,12 +498,38 @@ def create_temporary_table(conn: connection, df: pd.DataFrame, table_name: str):
         except:
             pass
 
+def save_dataframe_to_db_table(
+    conn: connection, df: pd.DataFrame, table_name: str, if_exists: str = "append"
+):
+    """
+    Save a pandas DataFrame to a PostgreSQL table.
+
+    Args:
+        conn: Database connection.
+        df: DataFrame to save.
+        table_name: Name of the target table.
+        if_exists: How to behave if the table already exists. Options: 'fail', 'replace', 'append'.
+                   'fail': Raise a ValueError.
+                   'replace': Drop the table before inserting new values.
+                   'append': Insert new values to the existing table.
+    """
+    try:
+        # Use pandas to_sql for simplicity and robustness
+        # It handles table creation/replacement/appending based on if_exists
+        df.to_sql(table_name, conn, if_exists=if_exists, index=False)
+        logger.info(f"Successfully saved {len(df)} records to table '{table_name}' with mode '{if_exists}'.")
+    except Exception as e:
+        logger.error(f"Failed to save DataFrame to table '{table_name}': {e}")
+
 # Retain original function's compatibility version
 async def get_prefiltered_datasets_from_local_db(
     conn,
     organisms: list,
     search_term: str,
-    limit: int = 100
+    limit: int = 100,
+    save_to_db_table: bool = False,
+    db_table_name: str = "prefiltered_srx_data",
+    db_table_if_exists: str = "append"
 ) -> list:
     """
     Compatibility version of original prefiltering function, now using new functional filters
@@ -505,7 +541,10 @@ async def get_prefiltered_datasets_from_local_db(
             conn=conn,
             organisms=organisms,
             search_term=search_term,
-            limit=limit
+            limit=limit,
+            save_to_db_table=save_to_db_table,
+            db_table_name=db_table_name,
+            db_table_if_exists=db_table_if_exists
         )
         
         if result_df.empty:
