@@ -1,12 +1,10 @@
 import os
 import sys
-from typing import List, Dict, Any, Tuple, Optional, Set
-import psycopg2 
+from typing import List, Dict, Any, Optional
 import pandas as pd
-from pypika import Query, Table, Field, Column, Criterion
-from psycopg2.extras import execute_values
 from psycopg2.extensions import connection
 import logging
+from datetime import datetime  
 
 # import prefilter module
 # Fix relative import issue
@@ -55,265 +53,7 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
-def execute_query_with_cursor(conn, query, params):
-    """
-    Handle database query and results.
-    """
-    try:
-        cursor = conn.cursor()
-        cursor.execute(query, params)
-        
-        if cursor.description is None:
-            cursor.close()
-            return pd.DataFrame()
-        
-        colnames = [desc[0] for desc in cursor.description]
-        results = cursor.fetchall()
-        cursor.close()
-        
-        return pd.DataFrame(results, columns=colnames)
-        
-    except Exception as e:
-        print(f"Database query error: {e}")
-        try:
-            cursor.close()
-        except:
-            pass
-        return pd.DataFrame()
-
-# Keep all original functions
-def db_find_srx(srx_accessions: List[str], conn: connection) -> pd.DataFrame:
-    """
-    Get SRX records on the database
-    Args:
-        conn: Connection to the database.
-        database: Name of the database to query.
-    Returns:
-        List of entrez_id values of SRX records that have not been processed.
-    """
-    srx_metadata = Table("srx_metadata")
-    stmt = Query \
-        .from_(srx_metadata) \
-        .select("*") \
-        .distinct() \
-        .where(srx_metadata.srx_accession.isin(srx_accessions))
-    # return as pandas dataframe
-    df = pd.read_sql(str(stmt), conn)
-    return df
-
-def db_get_srx_records(conn: connection, column: str="entrez_id", database: str="sra") -> List[int]:
-    """
-    Get the entrez_id values of all SRX records in the database.
-    Args:
-        conn: Connection to the database.
-        database: Name of the database to query.
-    Returns:
-        List of entrez_id values of SRX records that have not been processed.
-    """
-    srx_metadata = Table("srx_metadata")
-    target_column = getattr(srx_metadata, column)
-    stmt = Query \
-        .from_(srx_metadata) \
-        .select(target_column) \
-        .distinct() \
-        .where(srx_metadata.database == database)
-        
-    # Fetch the results and return a list of {target_column} values
-    results = execute_query(stmt, conn)
-    return [row[0] for row in results] if results else []
-
-def db_get_unprocessed_records(conn: connection, database: str="sra") -> List[int]:
-    """
-    Get the entrez_id values of SRX records that have not been processed.
-    Args:
-        conn: Connection to the database.
-        database: Name of the database to query.
-    Returns:
-        List of entrez_id values of SRX records that have not been processed.
-    """
-    srx_metadata = Table("srx_metadata")
-    srx_srr = Table("srx_srr")
-    stmt = Query \
-        .from_(srx_metadata) \
-        .left_join(srx_srr) \
-        .on(srx_metadata.srx_accession == srx_srr.srx_accession) \
-        .select(srx_metadata.entrez_id) \
-        .distinct() \
-        .where(
-            Criterion.all([
-                srx_metadata.database == database,
-                srx_srr.srr_accession.isnull()
-            ])
-        )
-        
-    # Fetch the results and return a list of entrez_id values
-    results = execute_query(stmt, conn)
-    return [row[0] for row in results] if results else []
-
-def db_get_filtered_srx_metadata(
-    conn: connection, 
-    organism: str = None,
-    is_single_cell: str = None,
-    query: str = None,
-    limit: int = 100,
-    database: str="sra"
-    ) -> pd.DataFrame:
-    """
-    Get filtered SRX metadata records from the database.
-    Args:
-        conn: Connection to the database.
-        organism: Organism to filter by (e.g., "Homo sapiens").
-        is_single_cell: Filter by single cell status ("yes" or "no").
-        limit: Maximum number of records to return.
-        database: Name of the database to query.
-    Returns:
-        dataframe of filtered SRX metadata records.
-    """
-    srx_metadata = Table("srx_metadata")
-
-    criteria = [srx_metadata.database == database]
-    if organism:
-        criteria.append(srx_metadata.organism == organism)
-    if is_single_cell:
-        criteria.append(srx_metadata.is_single_cell == is_single_cell)
-    if query:
-        # Add a case-insensitive search across multiple text fields
-        # Using ilike for case-insensitive LIKE in PostgreSQL
-        search_pattern = f"%{query.lower()}%"
-        criteria.append(
-            Criterion.any([
-                srx_metadata.title.ilike(search_pattern),
-                srx_metadata.design_description.ilike(search_pattern)
-            ])
-        )
-
-    stmt = Query \
-        .from_(srx_metadata) \
-        .select(
-            srx_metadata.srx_accession,
-            srx_metadata.entrez_id,
-            srx_metadata.organism,
-            srx_metadata.library_strategy,
-            srx_metadata.library_source,
-            srx_metadata.library_selection,
-            srx_metadata.platform,
-            srx_metadata.instrument_model,
-            srx_metadata.sra_study_accession,
-            srx_metadata.bioproject_accession,
-            srx_metadata.biosample_accession,
-            srx_metadata.pubmed_id,
-            srx_metadata.title,
-            srx_metadata.design_description,
-            srx_metadata.sample_description,
-            srx_metadata.submission_date,
-            srx_metadata.update_date
-        ) \
-        .where(Criterion.all(criteria)) \
-        .limit(limit)
-        
-    # fetch as pandas dataframe
-    df = pd.read_sql(str(stmt), conn)
-    return df if not df.empty else []
-
-def db_get_srx_accessions(
-    conn: connection, database: str="sra"
-    ) -> Set[int]:
-    """
-    Get all SRX accessions in the screcounter database
-    Args:
-        conn: Connection to the database.
-        database: Name of the sequence database (e.g., sra)
-    Returns:
-        Set of SRX accessions in the database.
-    """
-    srx_metadata = Table("srx_metadata")
-    stmt = Query \
-        .from_(srx_metadata) \
-        .where(
-            srx_metadata.database == database
-        ) \
-        .select(
-            srx_metadata.srx_accession
-        ) \
-        .distinct()
-        
-    # fetch records
-    with conn.cursor() as cur:
-        cur.execute(str(stmt))
-        results = cur.fetchall()
-        return set([int(row[0]) for row in results]) if results else set()
-
-def db_get_entrez_ids(
-    conn: connection, database: str="sra"
-    ) -> Set[int]:
-    """
-    Get all Entrez IDs in the screcounter database
-    Args:
-        conn: Connection to the database.
-        database: Name of the sequence database (e.g., sra)
-    Returns:
-        Set of Entrez IDs in the database. Returns empty set if no results.
-    """
-    srx_metadata = Table("srx_metadata")
-    stmt = Query \
-        .from_(srx_metadata) \
-        .where(
-            srx_metadata.database == database
-        ) \
-        .select(
-            srx_metadata.entrez_id
-        ) \
-        .distinct()
-        
-    # fetch records
-    with conn.cursor() as cur:
-        cur.execute(str(stmt))
-        results = cur.fetchall()
-        return set([int(row[0]) for row in results]) if results else set()
-
-def db_get_eval(conn: connection, dataset_ids: List[str]) -> pd.DataFrame:
-    """
-    Get the entrez_id values of all SRX records in the database.
-    Args:
-        conn: Connection to the database.
-        dataset_ids: List of dataset_ids to return
-    Returns:
-        List of entrez_id values of SRX records that have not been processed.
-    """
-    try:
-        tbl = Table("eval")
-        stmt = Query \
-            .from_(tbl) \
-            .select(tbl.dataset_id) \
-            .distinct() \
-            .where(tbl.dataset_id.isin(dataset_ids))
-            
-        # Fetch the results and return a list of {target_column} values
-        results = execute_query(stmt, conn)
-        if results is None: 
-            logger.warning("eval table does not exist or query retured None")
-            return []
-        return [row[0] for row in results]
-    except Exception as e:
-        logger.error(f"Error querying eval table: {e}")
-        return []
-
-def db_get_table_data(conn: connection, table_name: str) -> pd.DataFrame:
-    """
-    Get all data from a specified table.
-    Args:
-        conn: Connection to the database.
-        table_name: The name of the table to query.
-    Returns:
-        DataFrame containing all data from the specified table.
-    """
-    tbl = Table(table_name)
-    stmt = Query \
-        .from_(tbl) \
-        .select("*")
-    return pd.read_sql(str(stmt), conn)
-
-# New prefilter function, using independent filter module
+# Prefilter function, using independent filter module
 def get_prefiltered_datasets_functional(
     conn: connection,
     organisms: List[str] = ["human"],
@@ -321,10 +61,7 @@ def get_prefiltered_datasets_functional(
     limit: int = 100,
     min_sc_confidence: int = 2,
     create_temp_table: bool = False,
-    temp_table_name: str = "temp_prefiltered_results",
-    save_to_db_table: bool = False,
-    db_table_name: str = "prefiltered_srx_data",
-    db_table_if_exists: str = "append"
+    temp_table_name: str = "temp_prefiltered_results"
 ) -> pd.DataFrame:
     """
     Prefilter datasets using a functional prefiltering approach, where each filter
@@ -359,9 +96,6 @@ def get_prefiltered_datasets_functional(
         if create_temp_table and not final_result.data.empty:
             create_temporary_table(conn, final_result.data, temp_table_name)
         
-        if save_to_db_table and not final_result.data.empty:
-            save_dataframe_to_db_table(conn, final_result.data, db_table_name, db_table_if_exists)
-
         return final_result.data
         
     except Exception as e:
@@ -371,10 +105,7 @@ def get_prefiltered_datasets_functional(
 def get_prefiltered_datasets_custom_chain(
     conn: connection,
     custom_filters: List[str],
-    filter_params: Dict[str, Any] = None,
-    save_to_db_table: bool = False,
-    db_table_name: str = "prefiltered_srx_data",
-    db_table_if_exists: str = "append"
+    filter_params: Dict[str, Any] = None
 ) -> pd.DataFrame:
     """
     Prefilter datasets using a custom filter chain.
@@ -434,9 +165,6 @@ def get_prefiltered_datasets_custom_chain(
                 logger.warning("No records remaining after filter: " + filter_name)
                 break
         
-        if save_to_db_table and result and not result.data.empty:
-            save_dataframe_to_db_table(conn, result.data, db_table_name, db_table_if_exists)
-
         return result.data if result else pd.DataFrame()
         
     except Exception as e:
@@ -498,38 +226,12 @@ def create_temporary_table(conn: connection, df: pd.DataFrame, table_name: str):
         except:
             pass
 
-def save_dataframe_to_db_table(
-    conn: connection, df: pd.DataFrame, table_name: str, if_exists: str = "append"
-):
-    """
-    Save a pandas DataFrame to a PostgreSQL table.
-
-    Args:
-        conn: Database connection.
-        df: DataFrame to save.
-        table_name: Name of the target table.
-        if_exists: How to behave if the table already exists. Options: 'fail', 'replace', 'append'.
-                   'fail': Raise a ValueError.
-                   'replace': Drop the table before inserting new values.
-                   'append': Insert new values to the existing table.
-    """
-    try:
-        # Use pandas to_sql for simplicity and robustness
-        # It handles table creation/replacement/appending based on if_exists
-        df.to_sql(table_name, conn, if_exists=if_exists, index=False)
-        logger.info(f"Successfully saved {len(df)} records to table '{table_name}' with mode '{if_exists}'.")
-    except Exception as e:
-        logger.error(f"Failed to save DataFrame to table '{table_name}': {e}")
-
 # Retain original function's compatibility version
 async def get_prefiltered_datasets_from_local_db(
     conn,
     organisms: list,
     search_term: str,
-    limit: int = 100,
-    save_to_db_table: bool = False,
-    db_table_name: str = "prefiltered_srx_data",
-    db_table_if_exists: str = "append"
+    limit: int = 100
 ) -> list:
     """
     Compatibility version of original prefiltering function, now using new functional filters
@@ -541,10 +243,7 @@ async def get_prefiltered_datasets_from_local_db(
             conn=conn,
             organisms=organisms,
             search_term=search_term,
-            limit=limit,
-            save_to_db_table=save_to_db_table,
-            db_table_name=db_table_name,
-            db_table_if_exists=db_table_if_exists
+            limit=limit
         )
         
         if result_df.empty:
@@ -589,7 +288,7 @@ def check_table_structure(conn):
 # Example usage function
 def example_usage():
     """
-    Show how to use the new prefiltering system
+    Show how to use the new prefiltering and export system
     """
     from dotenv import load_dotenv
     try:
@@ -609,41 +308,52 @@ def example_usage():
     load_dotenv()
     
     with db_connect() as conn:
-        print("=== Example 1: Standard prefiltering process ===")
-        result1 = get_prefiltered_datasets_functional(
+        print("=== Example 1: JSON Export with Full Categorization ===")
+        result1 = export_prefiltered_datasets_to_json(
             conn=conn,
+            output_path="exports/example_datasets.json",
             organisms=["human"],
             search_term="cancer",
-            limit=10
+            limit=50,
+            include_categorization=True,
+            include_grouping=True
         )
-        print(f"Result 1: {len(result1)} records\n")
+        print(f"JSON Export Result: {result1['status']}")
         
-        print("=== Example 2: Custom filter chain ===")
-        result2 = get_prefiltered_datasets_custom_chain(
+        print("\n=== Example 2: SQLite Export ===")
+        result2 = export_prefiltered_datasets_to_sqlite(
             conn=conn,
-            custom_filters=['initial', 'basic', 'organism', 'keyword', 'limit'],
-            filter_params={
-                'organisms': ['human'],
-                'search_term': 'brain',
-                'limit': 5
-            }
+            output_path="exports/example_datasets.db",
+            organisms=["human"],
+            search_term="brain",
+            limit=30,
+            create_categorized_tables=True
         )
-        print(f"Result 2: {len(result2)} records\n")
+        print(f"SQLite Export Result: {result2['status']}")
         
-        print("=== Example 3: Step-by-step manual filtering ===")
-        # Manually create filter chain, can stop or modify at any step
-        initial_filter = InitialDatasetFilter(conn)
-        basic_filter = BasicAvailabilityFilter(conn)
-        organism_filter = OrganismFilter(conn, ["human"])
-        sc_filter = SingleCellFilter(conn, min_confidence=2)
-        
-        # Apply step-by-step
-        result = initial_filter.apply()
-        result = basic_filter.apply(result)
-        result = organism_filter.apply(result)
-        result = sc_filter.apply(result)
-        
-        print(f"Result 3: {result.count} records")
+        print("\n=== Example 3: Classify-Ready Export ===")
+        result3 = create_classify_ready_export(
+            conn=conn,
+            output_dir="exports/classify_ready",
+            organisms=["human"],
+            search_term="single cell",
+            limit=100,
+            export_format="json"
+        )
+        print(f"Classify-Ready Export Result: {result3['status']}")
+
+        # export function
+        print("\n=== Export Examples ===")
+        from .export import create_classify_ready_export
+    
+        result = create_classify_ready_export(
+            conn=conn,
+            output_dir="exports/classify_ready",
+            organisms=["human"],
+            export_format="json"
+        )
+        print(f"Export Result: {result['status']}")
+
 
 # main
 if __name__ == "__main__":
@@ -653,65 +363,148 @@ if __name__ == "__main__":
     try:
         from SRAgent.db.connect import db_connect
     except ImportError:
-        try:
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            project_root = os.path.dirname(os.path.dirname(current_dir))
-            sys.path.insert(0, project_root)
-            from SRAgent.db.connect import db_connect
-        except ImportError:
-            print("Cannot import db_connect. Please check import paths.")
-            sys.exit(1)
+        print("Cannot import db_connect. Please check import paths.")
+        sys.exit(1)
     
+    def test_export_functionality(conn, df):
+        """临时测试导出功能"""
+        try:
+            import json
+            from pathlib import Path
+            
+            if df.empty:
+                print("No data to export")
+                return {"status": "no_data"}
+            
+            # 简单的项目分类测试
+            def categorize_test(df):
+                categorized = {'GSE': [], 'PRJNA': [], 'ena-STUDY': [], 'discarded': []}
+                records = df.to_dict(orient='records')
+                
+                for record in records:
+                    project_id = None
+                    for field in ['sra_study_accession', 'bioproject_accession', 'study_accession']:
+                        if field in record and record[field]:
+                            project_id = str(record[field])
+                            break
+                    
+                    if not project_id:
+                        categorized['discarded'].append(record)
+                        continue
+                        
+                    if project_id.startswith('GSE'):
+                        categorized['GSE'].append(record)
+                    elif project_id.startswith('PRJNA'):
+                        categorized['PRJNA'].append(record)
+                    elif project_id.startswith('ena-STUDY'):
+                        categorized['ena-STUDY'].append(record)
+                    else:
+                        categorized['discarded'].append(record)
+                
+                return categorized
+            
+            # 执行分类
+            categorized = categorize_test(df)
+            
+            # 创建导出数据
+            export_data = {
+                "export_metadata": {
+                    "timestamp": datetime.now().isoformat(),
+                    "total_records": len(df),
+                    "test_export": True,
+                    "categorization_stats": {
+                        category: len(records) for category, records in categorized.items()
+                    }
+                },
+                "raw_data": df.to_dict(orient='records'),
+                "categorized_data": categorized
+            }
+            
+            # 创建输出目录
+            output_dir = Path("test_export")
+            output_dir.mkdir(exist_ok=True)
+            
+            # 写入主文件
+            with open(output_dir / "test_datasets.json", "w") as f:
+                json.dump(export_data, f, indent=2, default=str)
+            
+            # 为每个类别创建单独文件
+            for category, records in categorized.items():
+                if records:
+                    category_file = output_dir / f"{category.lower()}_projects.json"
+                    with open(category_file, "w") as f:
+                        json.dump({
+                            "category": category,
+                            "count": len(records),
+                            "projects": records
+                        }, f, indent=2, default=str)
+            
+            print(f"✅ Test export successful!")
+            print(f"   📁 Output directory: {output_dir}")
+            print(f"   📊 Total records: {len(df)}")
+            print(f"   📋 Categorization:")
+            for category, records in categorized.items():
+                if records:
+                    print(f"      - {category}: {len(records)} records")
+            
+            return {"status": "success", "output_dir": str(output_dir)}
+            
+        except Exception as e:
+            print(f"❌ Test export failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return {"status": "error", "message": str(e)}
+
     os.environ["DYNACONF"] = "test"
     try: 
         with db_connect() as conn:
-            # Run example
-            example_usage()
-            
-            # Original test code with error handling 
-            print("=== Original test functions ===")
+            # Testing prefilter functions
+            print("=== Testing prefilter functions ===")
             try:
-                eval_result = db_get_eval(conn, ["eval1"])
-                print("db_get_eval result:", eval_result)
+                result_df = get_prefiltered_datasets_functional(
+                    conn=conn,
+                    organisms=["human"],
+                    search_term="cancer",
+                    limit=10
+                )
+                print(f"Prefilter result: {len(result_df)} records")
             except Exception as e:
-                print(f"db_get_eval error: {e}")
+                print(f"Prefiltering error: {e}")
 
+            # Testinbg export functions 
+            print("\n=== Testing export functions ===")
             try:
-                srx_records = db_get_srx_records(conn)
-                print("db_get_srx_records count:", len(srx_records) if srx_records else 0)
+            # Plan A: Dynamic import
+                import importlib.util
+                import sys
+                from pathlib import Path
+                
+                # Get export module path
+                current_dir = Path(__file__).parent
+                export_dir = current_dir / "export"
+                
+                if export_dir.exists():
+                    sys.path.insert(0, str(current_dir))
+                    from export.categorize import create_classify_ready_export
+                else:
+                    # If not split yet, define a simple test function in the current file
+                    print("Export module not yet created, skipping export test")
+                    raise ImportError("Export module not found")
+                
+                export_result = create_classify_ready_export(
+                    conn=conn,
+                    output_dir="test_export",
+                    organisms=["human"],
+                    limit=5,
+                    export_format="json"
+                )
+                print(f"Export result: {export_result['status']}")
+                
+            except ImportError as e:
+                print(f"Export module not available yet: {e}")
             except Exception as e:
-                print(f"db_get_srx_records error: {e}")
-
-            try:
-                unprocessed = db_get_unprocessed_records(conn)
-                print("db_get_unprocessed_records count:", len(unprocessed) if unprocessed else 0)
-            except Exception as e:
-                print(f"db_get_unprocessed_records error: {e}")
-
-            try:
-                srx_accessions = db_get_srx_accessions(conn)
-                print("srx_accessions count:", len(srx_accessions))
-            except Exception as e:
-                print(f"db_get_srx_accessions error: {e}")
-
-            try:
-                find_result = db_find_srx(["SRX19162973"], conn)
-                print("db_find_srx result shape:", find_result.shape if hasattr(find_result, 'shape') else len(find_result))
-            except Exception as e:
-                print(f"db_find_srx error: {e}")
-
-            #Example usage for the new function  
-            metadata = db_get_filtered_srx_metadata(
-                conn, 
-                organism="Homo sapiens",
-                is_single_cell="yes",
-                limit=100
-            )
-            print("Filtered metadata shape:", metadata.shape if hasattr(metadata, 'shape') else len(metadata))
+                print(f"Export error: {e}")
 
     except Exception as e:
         print(f"Database connection error: {e}")
-        import traceback
-        traceback.print_exc()
-        print(db_find_srx(["SRX19162973"], conn))
-        
+    
