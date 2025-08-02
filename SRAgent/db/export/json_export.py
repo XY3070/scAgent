@@ -17,7 +17,7 @@ def export_prefiltered_to_json(
     output_path: str = "prefiltered_datasets.json",
     organisms: List[str] = ["human"],
     search_term: Optional[str] = None,
-    limit: int = 1000,
+    limit: int = 100000,
     min_sc_confidence: int = 2,
     include_categorization: bool = True,
     include_grouping: bool = True

@@ -63,7 +63,7 @@ def group_datasets_by_project_id(catogorized: Dict[str, List[Dict]]) -> Dict[str
     """
     grouped = {}
 
-    for category, records in categorized_data.items():
+    for category, records in categorized.items():
         if category == 'discarded':
             grouped[category] = records
             continue
@@ -73,7 +73,7 @@ def group_datasets_by_project_id(catogorized: Dict[str, List[Dict]]) -> Dict[str
         for record in records:
             # Extract project ID
             project_id = None
-            for field in ['sra_study_accession', 'bioproject_accession', 'study_accession']:
+            for field in ['study_alias', 'sample_alias']:
                 if field in record and record[field]:
                     project_id = str(record[field])
                     break

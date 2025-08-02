@@ -58,7 +58,7 @@ def get_prefiltered_datasets_functional(
     conn: connection,
     organisms: List[str] = ["human"],
     search_term: Optional[str] = None,
-    limit: int = 100,
+    limit: int = 20000000,
     min_sc_confidence: int = 2,
     create_temp_table: bool = False,
     temp_table_name: str = "temp_prefiltered_results"
@@ -154,7 +154,7 @@ def get_prefiltered_datasets_custom_chain(
             elif filter_name == 'keyword':
                 filter_obj = filter_class(conn, filter_params.get('search_term'))
             elif filter_name == 'limit':
-                filter_obj = filter_class(conn, filter_params.get('limit', 100))
+                filter_obj = filter_class(conn, filter_params.get('limit', 20000000))
             else:
                 filter_obj = filter_class(conn)
             
@@ -231,7 +231,7 @@ async def get_prefiltered_datasets_from_local_db(
     conn,
     organisms: list,
     search_term: str,
-    limit: int = 100
+    limit: int = 20000000
 ) -> list:
     """
     Compatibility version of original prefiltering function, now using new functional filters
@@ -366,8 +366,12 @@ if __name__ == "__main__":
         print("Cannot import db_connect. Please check import paths.")
         sys.exit(1)
     
+    os.environ["DYNACONF"] = "test"  
+
     def test_export_functionality(conn, df):
-        """临时测试导出功能"""
+        """
+        Temporary test the export function
+        """
         try:
             import json
             from pathlib import Path
@@ -376,17 +380,24 @@ if __name__ == "__main__":
                 print("No data to export")
                 return {"status": "no_data"}
             
-            # 简单的项目分类测试
+            # simple project categorization test
             def categorize_test(df):
                 categorized = {'GSE': [], 'PRJNA': [], 'ena-STUDY': [], 'discarded': []}
                 records = df.to_dict(orient='records')
+
                 
                 for record in records:
                     project_id = None
+
+                    search_fields = ['study_alias', 'sra_ID', 'run_alias', 'experiment_alias', 
+                        'sample_alias', 'submission_alias', 'gsm_title']
+
                     for field in ['sra_study_accession', 'bioproject_accession', 'study_accession']:
                         if field in record and record[field]:
-                            project_id = str(record[field])
-                            break
+                            value = str(record[field]).strip()
+                            if value and value != 'nan' and value != 'None':
+                                project_id = value
+                                break
                     
                     if not project_id:
                         categorized['discarded'].append(record)
@@ -403,10 +414,10 @@ if __name__ == "__main__":
                 
                 return categorized
             
-            # 执行分类
+            # execute the categorization
             categorized = categorize_test(df)
             
-            # 创建导出数据
+            # create the export data
             export_data = {
                 "export_metadata": {
                     "timestamp": datetime.now().isoformat(),
@@ -420,15 +431,15 @@ if __name__ == "__main__":
                 "categorized_data": categorized
             }
             
-            # 创建输出目录
+            # create the output directory
             output_dir = Path("test_export")
             output_dir.mkdir(exist_ok=True)
             
-            # 写入主文件
+            # write the main file
             with open(output_dir / "test_datasets.json", "w") as f:
                 json.dump(export_data, f, indent=2, default=str)
             
-            # 为每个类别创建单独文件
+            # create separate files for each category
             for category, records in categorized.items():
                 if records:
                     category_file = output_dir / f"{category.lower()}_projects.json"
@@ -455,56 +466,30 @@ if __name__ == "__main__":
             traceback.print_exc()
             return {"status": "error", "message": str(e)}
 
-    os.environ["DYNACONF"] = "test"
     try: 
         with db_connect() as conn:
             # Testing prefilter functions
             print("=== Testing prefilter functions ===")
-            try:
-                result_df = get_prefiltered_datasets_functional(
-                    conn=conn,
-                    organisms=["human"],
-                    search_term="cancer",
-                    limit=10
-                )
-                print(f"Prefilter result: {len(result_df)} records")
-            except Exception as e:
-                print(f"Prefiltering error: {e}")
 
-            # Testinbg export functions 
+            result_df = get_prefiltered_datasets_functional(
+                conn=conn,
+                organisms=["human"],
+                search_term="cancer",
+                limit=10
+            )
+            print(f"Prefilter result: {len(result_df)} records")
+            
+            # Testing export functions 
             print("\n=== Testing export functions ===")
-            try:
-            # Plan A: Dynamic import
-                import importlib.util
-                import sys
-                from pathlib import Path
-                
-                # Get export module path
-                current_dir = Path(__file__).parent
-                export_dir = current_dir / "export"
-                
-                if export_dir.exists():
-                    sys.path.insert(0, str(current_dir))
-                    from export.categorize import create_classify_ready_export
-                else:
-                    # If not split yet, define a simple test function in the current file
-                    print("Export module not yet created, skipping export test")
-                    raise ImportError("Export module not found")
-                
-                export_result = create_classify_ready_export(
-                    conn=conn,
-                    output_dir="test_export",
-                    organisms=["human"],
-                    limit=5,
-                    export_format="json"
-                )
-                print(f"Export result: {export_result['status']}")
-                
-            except ImportError as e:
-                print(f"Export module not available yet: {e}")
-            except Exception as e:
-                print(f"Export error: {e}")
+            export_result = test_export_functionality(conn, result_df)
 
+            if export_result["status"] == "success":
+                print("\n All tests passed! Ready for module refactoring.")
+            else:
+                print(f"\n Export test had issues: {export_result.get('message', 'Unknown error')}")
+    
     except Exception as e:
         print(f"Database connection error: {e}")
+        import traceback
+        traceback.print_exc()
     

@@ -81,6 +81,7 @@ Thumbs.db
 
 # Environment variables file
 .env
+.venv
 
 # SRAgent specific
 SRAgent/settings.yml
@@ -94,3 +95,4 @@ SRAgent/agents/filter_datasets.py
 SRAgent/agents/find_datasets.py
 SRAgent/agents/tissue_ontology.py
 SRAgent/test_prefilter.py
+test_export/
