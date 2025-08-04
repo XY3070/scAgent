@@ -233,7 +233,7 @@ class EnhancedMetadataExtractor:
             # Use a more conservative query that handles missing columns gracefully
             query = f"""
             SELECT 
-                sra_ID,
+                "sra_ID",
                 COALESCE(pubmed_id, '') as pubmed_id,
                 COALESCE(study_url_link, '') as study_url_link,
                 COALESCE(gse_web_link, '') as gse_web_link,
@@ -241,7 +241,7 @@ class EnhancedMetadataExtractor:
                 COALESCE(lab_name, '') as lab_name,
                 COALESCE(gsm_description, '') as gsm_description
             FROM merged.sra_geo_ft 
-            WHERE CAST(sra_ID AS TEXT) IN ({placeholders})
+            WHERE CAST("sra_ID" AS TEXT) IN ({placeholders})
             LIMIT 1000
             """
             

@@ -44,6 +44,7 @@ var/
 *.egg
 sandbox*
 deepmased_files.txt
+vibe-doc/
 
 # PyPI publishing
 *.tar.gz

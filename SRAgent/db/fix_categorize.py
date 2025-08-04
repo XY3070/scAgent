@@ -1,4 +1,26 @@
+#!/usr/bin/env python3
 """
+Quick fix script for categorize import issue
+Run this in your SRAgent/db/ directory to fix the categorize module
+"""
+
+import os
+import sys
+
+def fix_categorize_module():
+    """Fix the categorize module import issue"""
+    
+    print("🔧 Fixing categorize module...")
+    
+    # Get current directory
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    categorize_path = os.path.join(current_dir, 'categorize.py')
+    
+    print(f"📁 Working directory: {current_dir}")
+    print(f"📄 Categorize file path: {categorize_path}")
+    
+    # Create a working categorize.py
+    categorize_content = '''"""
 Simple categorize module for dataset organization
 Fixed version - ensures proper imports and function definitions
 """
@@ -24,7 +46,7 @@ def categorize_datasets_by_project(df: pd.DataFrame) -> Dict[str, List[Dict]]:
             logger.info("Empty DataFrame provided, returning empty categories")
             return {'GSE': [], 'PRJNA': [], 'ena-STUDY': [], 'discarded': []}
         
-        categorized = {'GSE': [], 'PRJNA': [], 'ena-STUDY': [], 'E-MTAB': [],'discarded': []}
+        categorized = {'GSE': [], 'PRJNA': [], 'ena-STUDY': [], 'discarded': []}
         records = df.to_dict(orient='records')
         
         logger.info(f"Categorizing {len(records)} records")
@@ -56,8 +78,6 @@ def categorize_datasets_by_project(df: pd.DataFrame) -> Dict[str, List[Dict]]:
                 categorized['PRJNA'].append(record)
             elif project_id.startswith('ena-STUDY'):
                 categorized['ena-STUDY'].append(record)
-            elif project_id.startswith('E-MTAB'):
-                categorized['E-MTAB'].append(record)
             else:
                 # Try to extract from other fields
                 found_category = False
@@ -70,14 +90,6 @@ def categorize_datasets_by_project(df: pd.DataFrame) -> Dict[str, List[Dict]]:
                             break
                         elif 'PRJNA' in field_str:
                             categorized['PRJNA'].append(record)
-                            found_category = True
-                            break
-                        elif 'ena-STUDY' in field_str:
-                            categorized['ena-STUDY'].append(record)
-                            found_category = True
-                            break
-                        elif 'E-MTAB' in field_str:
-                            categorized['E-MTAB'].append(record)
                             found_category = True
                             break
                 
@@ -98,7 +110,7 @@ def categorize_datasets_by_project(df: pd.DataFrame) -> Dict[str, List[Dict]]:
     except Exception as e:
         logger.error(f"Error in categorize_datasets_by_project: {e}")
         # Return empty structure on error
-        return {'GSE': [], 'PRJNA': [], 'ena-STUDY': [], 'E-MTAB': [], 'discarded': []}
+        return {'GSE': [], 'PRJNA': [], 'ena-STUDY': [], 'discarded': []}
 
 
 def get_project_statistics(categorized_data: Dict[str, List[Dict]]) -> Dict[str, Any]:
@@ -181,3 +193,63 @@ def test_categorize_module():
 if __name__ == "__main__":
     # Run test when executed directly
     test_categorize_module()
+'''
+    
+    try:
+        # Backup existing file if it exists
+        if os.path.exists(categorize_path):
+            backup_path = categorize_path + '.backup'
+            os.rename(categorize_path, backup_path)
+            print(f"📋 Backed up existing file to: {backup_path}")
+        
+        # Write the fixed categorize.py
+        with open(categorize_path, 'w', encoding='utf-8') as f:
+            f.write(categorize_content)
+        
+        print(f"✅ Created fixed categorize.py: {categorize_path}")
+        print(f"📏 File size: {os.path.getsize(categorize_path)} bytes")
+        
+        # Test the new file
+        print(f"\n🧪 Testing the fixed categorize module...")
+        
+        # Add current directory to path for testing
+        if current_dir not in sys.path:
+            sys.path.insert(0, current_dir)
+        
+        # Try importing
+        try:
+            import importlib
+            if 'categorize' in sys.modules:
+                importlib.reload(sys.modules['categorize'])
+            else:
+                import categorize
+            
+            print("✅ Import successful")
+            
+            # Test the function
+            if hasattr(categorize, 'categorize_datasets_by_project'):
+                print("✅ Function 'categorize_datasets_by_project' found")
+                
+                # Quick function test
+                import pandas as pd
+                test_df = pd.DataFrame([{'study_alias': 'GSE123', 'sra_ID': '001'}])
+                result = categorize.categorize_datasets_by_project(test_df)
+                print(f"✅ Function test successful: {len(result)} categories")
+                
+            else:
+                print("❌ Function 'categorize_datasets_by_project' not found")
+                
+        except Exception as e:
+            print(f"❌ Import test failed: {e}")
+            
+        print(f"\n🎯 Fix completed! Your categorize module should now work properly.")
+        print(f"📝 You can now run your main script again:")
+        print(f"   uv run '/ssd2/xuyuan/SRAgent/SRAgent/db/get.py'")
+        
+    except Exception as e:
+        print(f"❌ Error creating fixed categorize module: {e}")
+        import traceback
+        traceback.print_exc()
+
+if __name__ == "__main__":
+    fix_categorize_module()
