@@ -44,6 +44,7 @@ var/
 *.egg
 sandbox*
 deepmased_files.txt
+vibe-doc/
 
 # PyPI publishing
 *.tar.gz
@@ -94,3 +95,4 @@ SRAgent/agents/filter_datasets.py
 SRAgent/agents/find_datasets.py
 SRAgent/agents/tissue_ontology.py
 SRAgent/test_prefilter.py
+test_export/

@@ -1,34 +1,33 @@
 import os
 import sys
-from typing import List, Dict, Any, Tuple, Optional, Set
-import psycopg2 
+from typing import List, Dict, Any, Optional
 import pandas as pd
-from pypika import Query, Table, Field, Column, Criterion
-from psycopg2.extras import execute_values
 from psycopg2.extensions import connection
 import logging
+from datetime import datetime  
 
-# import prefilter module
-# Fix relative import issue
-try:
-    # Try relative import first (when used as module)
-    from .prefilter import (
-        FilterResult, 
-        create_filter_chain, 
-        apply_filter_chain,
-        InitialDatasetFilter,
-        BasicAvailabilityFilter,
-        OrganismFilter,
-        SingleCellFilter,
-        SequencingStrategyFilter,
-        CancerStatusFilter,
-        TissueSourceFilter,
-        KeywordSearchFilter,
-        LimitFilter
-    )
-    from .utils import execute_query
-except ImportError:
-    # Fallback for direct execution
+
+# Fix import path issues
+def setup_imports():
+    """Setup proper import paths for the module"""
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    parent_dir = os.path.dirname(current_dir)
+    project_root = os.path.dirname(parent_dir)
+    
+    # Add paths to sys.path if not already present
+    for path in [current_dir, parent_dir, project_root]:
+        if path not in sys.path:
+            sys.path.insert(0, path)
+
+# Setup imports first
+setup_imports()
+
+# Now import modules with proper error handling
+def import_required_modules():
+    """Import required modules with fallback strategies"""
+    modules = {}
+    
+    # Try importing prefilter module
     try:
         from prefilter import (
             FilterResult, 
@@ -44,283 +43,92 @@ except ImportError:
             KeywordSearchFilter,
             LimitFilter
         )
-        try:
-            from utils import execute_query
-        except ImportError:
-            from .utils import execute_query
+        modules['prefilter'] = {
+            'FilterResult': FilterResult,
+            'create_filter_chain': create_filter_chain,
+            'apply_filter_chain': apply_filter_chain,
+            'filters': {
+                'InitialDatasetFilter': InitialDatasetFilter,
+                'BasicAvailabilityFilter': BasicAvailabilityFilter,
+                'OrganismFilter': OrganismFilter,
+                'SingleCellFilter': SingleCellFilter,
+                'SequencingStrategyFilter': SequencingStrategyFilter,
+                'CancerStatusFilter': CancerStatusFilter,
+                'TissueSourceFilter': TissueSourceFilter,
+                'KeywordSearchFilter': KeywordSearchFilter,
+                'LimitFilter': LimitFilter
+            }
+        }
+    except ImportError as e:
+        print(f"❌ Cannot import prefilter module: {e}")
+        print("Please ensure prefilter.py is in the same directory or in your Python path")
+        return None
+    
+    # Try importing utils
+    try:
+        from utils import execute_query
+        modules['utils'] = {'execute_query': execute_query}
     except ImportError:
-        print("❌ Cannot import prefilter module. Please check your setup.")
-        sys.exit(1)
+        try:
+            # Try alternative import path
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            utils_path = os.path.join(current_dir, 'utils.py')
+            if os.path.exists(utils_path):
+                import importlib.util
+                spec = importlib.util.spec_from_file_location("utils", utils_path)
+                utils_module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(utils_module)
+                modules['utils'] = {'execute_query': utils_module.execute_query}
+            else:
+                print("⚠️ Warning: utils module not found, some functionality may be limited")
+                modules['utils'] = None
+        except Exception as e:
+            print(f"⚠️ Warning: Could not import utils: {e}")
+            modules['utils'] = None
+    
+    # Try importing export modules
+    try:
+        # Try to import enhanced_metadata
+        try:
+            from enhanced_metadata import EnhancedMetadataExtractor, enhance_existing_categorize_workflow
+            modules['enhanced_metadata'] = {
+                'EnhancedMetadataExtractor': EnhancedMetadataExtractor,
+                'enhance_existing_categorize_workflow': enhance_existing_categorize_workflow
+            }
+        except ImportError:
+            print("⚠️ Warning: enhanced_metadata module not found")
+            modules['enhanced_metadata'] = None
+        
+        # Try to import categorize module
+        try:
+            from categorize import categorize_datasets_by_project
+            modules['categorize'] = {'categorize_datasets_by_project': categorize_datasets_by_project}
+        except ImportError:
+            print("⚠️ Warning: categorize module not found")
+            modules['categorize'] = None
+            
+    except Exception as e:
+        print(f"⚠️ Warning: Could not import export modules: {e}")
+        modules['enhanced_metadata'] = None
+        modules['categorize'] = None
+    
+    return modules
+
+# Import modules
+MODULES = import_required_modules()
+if MODULES is None:
+    print("❌ Critical modules missing. Exiting.")
+    sys.exit(1)
 
 logger = logging.getLogger(__name__)
 
 
-def execute_query_with_cursor(conn, query, params):
-    """
-    Handle database query and results.
-    """
-    try:
-        cursor = conn.cursor()
-        cursor.execute(query, params)
-        
-        if cursor.description is None:
-            cursor.close()
-            return pd.DataFrame()
-        
-        colnames = [desc[0] for desc in cursor.description]
-        results = cursor.fetchall()
-        cursor.close()
-        
-        return pd.DataFrame(results, columns=colnames)
-        
-    except Exception as e:
-        print(f"Database query error: {e}")
-        try:
-            cursor.close()
-        except:
-            pass
-        return pd.DataFrame()
-
-# Keep all original functions
-def db_find_srx(srx_accessions: List[str], conn: connection) -> pd.DataFrame:
-    """
-    Get the dataframe based on the given SRX accessions.
-    Args:
-        conn: Connection to the database.
-        srx_accessions: List of SRX accessions to query.
-    Returns:
-        Dataframe of SRX records that have not been processed.
-    """
-    srx_metadata = Table("srx_metadata")
-    stmt = Query \
-        .from_(srx_metadata) \
-        .select("*") \
-        .distinct() \
-        .where(srx_metadata.srx_accession.isin(srx_accessions))
-    # return as pandas dataframe
-    df = pd.read_sql(str(stmt), conn)
-    return df
-
-def db_get_srx_records(conn: connection, column: str="entrez_id", database: str="sra") -> Set[int]:
-    """
-    Get the {column} values of all SRX records in the database. Default col is entrez_id.
-    Args:
-        conn: Connection to the database.
-        database: Name of the database to query.
-    Returns:
-        Set of {column} values of SRX records that have not been processed. Default is entrez_id.
-    """
-    srx_metadata = Table("srx_metadata")
-    target_column = getattr(srx_metadata, column)
-    stmt = Query \
-        .from_(srx_metadata) \
-        .select(target_column) \
-        .distinct() \
-        .where(srx_metadata.database == database)
-        
-    # Fetch the results and return a list of {target_column} values
-    results = execute_query(stmt, conn)
-    return [row[0] for row in results] if results else []
-
-def db_get_unprocessed_records(conn: connection, database: str="sra") -> List[int]:
-    """
-    Get the entrez_id values of SRX records that have not been processed.
-    Args:
-        conn: Connection to the database.
-        database: Name of the database to query.
-    Returns:
-        List of entrez_id values of SRX records that have not been processed.
-    """
-    srx_metadata = Table("srx_metadata")
-    srx_srr = Table("srx_srr")
-    stmt = Query \
-        .from_(srx_metadata) \
-        .left_join(srx_srr) \
-        .on(srx_metadata.srx_accession == srx_srr.srx_accession) \
-        .select(srx_metadata.entrez_id) \
-        .distinct() \
-        .where(
-            Criterion.all([
-                srx_metadata.database == database,
-                srx_srr.srr_accession.isnull()
-            ])
-        )
-        
-    # Fetch the results and return a list of entrez_id values
-    results = execute_query(stmt, conn)
-    return [row[0] for row in results] if results else []
-
-def db_get_filtered_srx_metadata(
-    conn: connection, 
-    organism: str = None,
-    is_single_cell: str = None,
-    query: str = None,
-    limit: int = 100,
-    database: str="sra"
-    ) -> pd.DataFrame:
-    """
-    Get filtered SRX metadata records from the database.
-    Args:
-        conn: Connection to the database.
-        organism: Organism to filter by (e.g., "Homo sapiens").
-        is_single_cell: Filter by single cell status ("yes" or "no").
-        limit: Maximum number of records to return.
-        database: Name of the database to query.
-    Returns:
-        dataframe of filtered SRX metadata records.
-    """
-    srx_metadata = Table("srx_metadata")
-
-    criteria = [srx_metadata.database == database]
-    if organism:
-        criteria.append(srx_metadata.organism == organism)
-    if is_single_cell:
-        criteria.append(srx_metadata.is_single_cell == is_single_cell)
-    if query:
-        # Add a case-insensitive search across multiple text fields
-        # Using ilike for case-insensitive LIKE in PostgreSQL
-        search_pattern = f"%{query.lower()}%"
-        criteria.append(
-            Criterion.any([
-                srx_metadata.title.ilike(search_pattern),
-                srx_metadata.design_description.ilike(search_pattern)
-            ])
-        )
-
-    stmt = Query \
-        .from_(srx_metadata) \
-        .select(
-            srx_metadata.srx_accession,
-            srx_metadata.entrez_id,
-            srx_metadata.organism,
-            srx_metadata.is_single_cell,
-            srx_metadata.tech_10x,
-            srx_metadata.library_strategy,
-            srx_metadata.library_source,
-            srx_metadata.library_selection,
-            srx_metadata.platform,
-            srx_metadata.instrument_model,
-            srx_metadata.sra_study_accession,
-            srx_metadata.bioproject_accession,
-            srx_metadata.biosample_accession,
-            srx_metadata.pubmed_id,
-            srx_metadata.title,
-            srx_metadata.design_description,
-            srx_metadata.sample_description,
-            srx_metadata.submission_date,
-            srx_metadata.update_date
-        ) \
-        .where(Criterion.all(criteria)) \
-        .limit(limit)
-        
-    # fetch as pandas dataframe
-    df = pd.read_sql(str(stmt), conn)
-    return df if not df.empty else []
-
-def db_get_srx_accessions(
-    conn: connection, database: str="sra"
-    ) -> Set[int]:
-    """
-    Get a set of all SRX accessions in the screcounter database
-    Args:
-        conn: Connection to the database.
-        database: Name of the sequence database (e.g., sra)
-    Returns:
-        Set of SRX accessions in the database.
-    """
-    srx_metadata = Table("srx_metadata")
-    stmt = Query \
-        .from_(srx_metadata) \
-        .where(
-            srx_metadata.database == database
-        ) \
-        .select(
-            srx_metadata.srx_accession
-        ) \
-        .distinct()
-        
-    # fetch records
-    with conn.cursor() as cur:
-        cur.execute(str(stmt))
-        results = cur.fetchall()
-        return set([int(row[0]) for row in results]) if results else set()
-
-def db_get_entrez_ids(
-    conn: connection, database: str="sra"
-    ) -> Set[int]:
-    """
-    Get a set of all Entrez IDs in the screcounter database
-    Args:
-        conn: Connection to the database.
-        database: Name of the sequence database (e.g., sra)
-    Returns:
-        Set of Entrez IDs in the database. Returns empty set if no results.
-    """
-    srx_metadata = Table("srx_metadata")
-    stmt = Query \
-        .from_(srx_metadata) \
-        .where(
-            srx_metadata.database == database
-        ) \
-        .select(
-            srx_metadata.entrez_id
-        ) \
-        .distinct()
-        
-    # fetch records
-    with conn.cursor() as cur:
-        cur.execute(str(stmt))
-        results = cur.fetchall()
-        return set([int(row[0]) for row in results]) if results else set()
-
-def db_get_eval(conn: connection, dataset_ids: List[str]) -> pd.DataFrame:
-    """
-    Get the entrez_id values of all SRX records in the database.
-    Args:
-        conn: Connection to the database.
-        dataset_ids: List of dataset_ids to return
-    Returns:
-        List of entrez_id values of SRX records that have not been processed.
-    """
-    try:
-        tbl = Table("eval")
-        stmt = Query \
-            .from_(tbl) \
-            .select(tbl.dataset_id) \
-            .distinct() \
-            .where(tbl.dataset_id.isin(dataset_ids))
-            
-        # Fetch the results and return a list of {target_column} values
-        results = execute_query(stmt, conn)
-        if results is None: 
-            logger.warning("eval table does not exist or query retured None")
-            return []
-        return [row[0] for row in results]
-    except Exception as e:
-        logger.error(f"Error querying eval table: {e}")
-        return []
-
-def db_get_table_data(conn: connection, table_name: str) -> pd.DataFrame:
-    """
-    Get all data from a specified table.
-    Args:
-        conn: Connection to the database.
-        table_name: The name of the table to query.
-    Returns:
-        DataFrame containing all data from the specified table.
-    """
-    tbl = Table(table_name)
-    stmt = Query \
-        .from_(tbl) \
-        .select("*")
-    return pd.read_sql(str(stmt), conn)
-
-# New prefilter function, using independent filter module
+# Prefilter function, using independent filter module
 def get_prefiltered_datasets_functional(
     conn: connection,
     organisms: List[str] = ["human"],
     search_term: Optional[str] = None,
-    limit: int = 100,
+    limit: int = 20000000,
     min_sc_confidence: int = 2,
     create_temp_table: bool = False,
     temp_table_name: str = "temp_prefiltered_results"
@@ -342,8 +150,13 @@ def get_prefiltered_datasets_functional(
         Prefiltered DataFrame
     """
     try:
+        # Check iof prefilter module is available  
+        if not MODULES.get('prefilter'):
+            logger.error("prefilter module not available")
+            return pd.DataFrame()
+
         # Create filter chain
-        filter_chain = create_filter_chain(
+        filter_chain = MODULES['prefilter']['create_filter_chain'](
             conn=conn,
             organisms=organisms,
             search_term=search_term,
@@ -352,7 +165,7 @@ def get_prefiltered_datasets_functional(
         )
         
         # Apply filter chain
-        final_result = apply_filter_chain(filter_chain)
+        final_result = MODULES['prefilter']['apply_filter_chain'](filter_chain)
         
         # If needed, create temporary table
         if create_temp_table and not final_result.data.empty:
@@ -363,6 +176,58 @@ def get_prefiltered_datasets_functional(
     except Exception as e:
         logger.error(f"Prefiltering failed: {e}")
         return pd.DataFrame()
+
+def get_enhanced_prefiltered_datasets(
+    conn: connection,
+    organisms: List[str] = ['human'],
+    search_term: Optional[str] = None, 
+    limit: int = 20000000,
+    min_sc_confidence: int = 2,
+    output_format: str = "ai_optimized"  # "ai_optimized", "standard", "both"
+) -> Dict[str, Any]:
+    """Enhanced version of prefiltering with AI-optimized output
+    
+    Returns both standard Dataframe and AI-optimized hierarchical structure
+    """
+    try:
+        # Use exisiting prefilter function 
+        result_df = get_prefiltered_datasets_functional(
+            conn= conn, 
+            organisms=organisms,
+            search_term=search_term,
+            limit=limit,
+            min_sc_confidence=min_sc_confidence
+        )
+
+        if result_df.empty:
+            return {"status": "no_data", "data": pd.DataFrame(), "ai_data": {}}
+
+        # Apply categorization and enhancement
+        ai_data = {}
+        
+        # Check if categorize module is available
+        if MODULES.get('categorize'):
+            categorized = MODULES['categorize']['categorize_datasets_by_project'](result_df)
+            
+            # Check if enhanced_metadata module is available
+            if MODULES.get('enhanced_metadata') and output_format in ["ai_optimized", "both"]:
+                extractor = MODULES['enhanced_metadata']['EnhancedMetadataExtractor']()
+                ai_data = extractor.extract_hierarchical_metadata_from_db(conn, categorized)
+        else:
+            logger.warning("Categorize module not available, returning standard data only")
+        
+        if output_format == "ai_optimized":
+            return {"status": "success", "ai_data": ai_data}
+        elif output_format == "both":
+            return {"status": "success", "data": result_df, "ai_data": ai_data}
+        else:
+            return {"status": "success", "data": result_df}
+            
+    except Exception as e:
+        logger.error(f"Enhanced prefiltering failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return {"status": "error", "message": str(e)}
 
 def get_prefiltered_datasets_custom_chain(
     conn: connection,
@@ -382,19 +247,13 @@ def get_prefiltered_datasets_custom_chain(
     """
     if filter_params is None:
         filter_params = {}
+
+    if not MODULES.get('prefilter'):
+        logger.error("prefilter module not available")
+        return pd.DataFrame()
     
     # Map filter names to classes
-    filter_map = {
-        'initial': InitialDatasetFilter,
-        'basic': BasicAvailabilityFilter,
-        'organism': OrganismFilter,
-        'single_cell': SingleCellFilter,
-        'sequencing': SequencingStrategyFilter,
-        'cancer': CancerStatusFilter,
-        'tissue': TissueSourceFilter,
-        'keyword': KeywordSearchFilter,
-        'limit': LimitFilter
-    }
+    filter_map = MODULES['prefilter']['filters']
     
     try:
         # Build custom filter chain
@@ -402,11 +261,12 @@ def get_prefiltered_datasets_custom_chain(
         result = None
         
         for filter_name in custom_filters:
-            if filter_name not in filter_map:
+            filter_class_name = f"{filter_name.title()}Filter"
+            if filter_class_name not in filter_map:
                 logger.warning(f"Unknown filter: {filter_name}")
                 continue
             
-            filter_class = filter_map[filter_name]
+            filter_class = filter_map[filter_class_name]
             
             # Create instance based on filter type
             if filter_name == 'organism':
@@ -416,7 +276,7 @@ def get_prefiltered_datasets_custom_chain(
             elif filter_name == 'keyword':
                 filter_obj = filter_class(conn, filter_params.get('search_term'))
             elif filter_name == 'limit':
-                filter_obj = filter_class(conn, filter_params.get('limit', 100))
+                filter_obj = filter_class(conn, filter_params.get('limit', 20000000))
             else:
                 filter_obj = filter_class(conn)
             
@@ -493,7 +353,7 @@ async def get_prefiltered_datasets_from_local_db(
     conn,
     organisms: list,
     search_term: str,
-    limit: int = 100
+    limit: int = 20000000
 ) -> list:
     """
     Compatibility version of original prefiltering function, now using new functional filters
@@ -547,132 +407,186 @@ def check_table_structure(conn):
         print(f"❌ Failed to check table structure: {e}")
         return []
 
+def test_enhanced_workflow():
+    """
+    Test the enhanced workflow with better error handling
+    """
+    try:
+        # Import db_connect with proper error handling
+        try:
+            from connect import db_connect
+        except ImportError:
+            try:
+                current_dir = os.path.dirname(os.path.abspath(__file__))
+                project_root = os.path.dirname(os.path.dirname(current_dir))
+                sys.path.insert(0, os.path.join(project_root, 'SRAgent', 'db'))
+                from connect import db_connect
+            except ImportError:
+                print("❌ Cannot import db_connect. Please check your setup.")
+                return
+        
+        with db_connect() as conn: 
+            print("=== Testing Enhanced Workflow ===")
+
+            # Test with small dataset  
+            result = get_enhanced_prefiltered_datasets(
+                conn=conn, 
+                organisms=["human"],
+                search_term="cancer",
+                limit=10,
+                output_format="both"
+            )
+
+            if result["status"] == "success":
+                print(f"✅ Enhanced workflow successful!")
+                if "data" in result:
+                    print(f"📊 Standard data: {len(result['data'])} records")
+                if "ai_data" in result and result['ai_data']:
+                    hierarchical_data = result['ai_data'].get('hierarchical_data', {})
+                    if hierarchical_data:
+                        total_experiments = sum(
+                            data.get('category_summary', {}).get('total_experiments', 0) 
+                            for data in hierarchical_data.values()
+                        )
+                        print(f"🤖 AI-optimized data: {total_experiments} experiments")
+                        
+                        # Show structure
+                        for category, data in hierarchical_data.items():
+                            if data.get('experiments'):
+                                exp_count = len(data['experiments'])
+                                print(f"  - {category}: {exp_count} experiments")
+                    else:
+                        print("🤖 AI-optimized data: No hierarchical data generated")
+                else:
+                    print("🤖 AI-optimized data: Not available (missing modules)")
+            else:
+                print(f"❌ Enhanced workflow failed: {result.get('message')}")
+                    
+    except Exception as e:
+        print(f"❌ Test failed: {e}")
+        import traceback
+        traceback.print_exc()
+
+def test_basic_prefiltering():
+    """
+    Test basic prefiltering functionality
+    """
+    try:
+        # Import db_connect with proper error handling
+        try:
+            from connect import db_connect
+        except ImportError:
+            try:
+                current_dir = os.path.dirname(os.path.abspath(__file__))
+                project_root = os.path.dirname(os.path.dirname(current_dir))
+                sys.path.insert(0, os.path.join(project_root, 'SRAgent', 'db'))
+                from connect import db_connect
+            except ImportError:
+                print("❌ Cannot import db_connect. Please check your setup.")
+                return
+        
+        with db_connect() as conn:
+            print("=== Testing Basic Prefiltering ===")
+            
+            result_df = get_prefiltered_datasets_functional(
+                conn=conn,
+                organisms=["human"],
+                search_term="cancer",
+                limit=10
+            )
+            
+            if not result_df.empty:
+                print(f"✅ Basic prefiltering successful: {len(result_df)} records")
+                
+                # Show some column info
+                print("📊 Columns in result:")
+                for i, col in enumerate(result_df.columns[:10], 1):  # Show first 10 columns
+                    print(f"  {i:2d}. {col}")
+                if len(result_df.columns) > 10:
+                    print(f"     ... and {len(result_df.columns) - 10} more columns")
+                    
+            else:
+                print("❌ Basic prefiltering returned no results")
+                
+    except Exception as e:
+        print(f"❌ Basic prefiltering test failed: {e}")
+        import traceback
+        traceback.print_exc()
+
 # Example usage function
 def example_usage():
     """
     Show how to use the new prefiltering system
     """
     from dotenv import load_dotenv
+    load_dotenv()
+    
     try:
         from connect import db_connect
     except ImportError:
-        try:
-            import sys
-            import os
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            project_root = os.path.dirname(os.path.dirname(current_dir))
-            sys.path.insert(0, project_root)
-            from SRAgent.db.connect import db_connect
-        except ImportError:
-            print("Cannot import db_connect. Please check import paths.")
-            return
-    
-    load_dotenv()
+        print("❌ Cannot import db_connect. Please check your setup.")
+        return
     
     with db_connect() as conn:
-        print("=== Example 1: Standard prefiltering process ===")
-        result1 = get_prefiltered_datasets_functional(
+        print("=== Example Usage ===")
+        
+        # Example 1: Basic functional prefiltering
+        print("\n--- Example 1: Basic Prefiltering ---")
+        result_df = get_prefiltered_datasets_functional(
             conn=conn,
             organisms=["human"],
             search_term="cancer",
-            limit=10
+            limit=20
         )
-        print(f"Result 1: {len(result1)} records\n")
+        print(f"Result: {len(result_df)} records")
         
-        print("=== Example 2: Custom filter chain ===")
-        result2 = get_prefiltered_datasets_custom_chain(
+        # Example 2: Enhanced prefiltering with AI optimization
+        print("\n--- Example 2: Enhanced Prefiltering ---")
+        enhanced_result = get_enhanced_prefiltered_datasets(
             conn=conn,
-            custom_filters=['initial', 'basic', 'organism', 'keyword', 'limit'],
+            organisms=["human"],
+            search_term="brain",
+            limit=15,
+            output_format="both"
+        )
+        print(f"Enhanced Result Status: {enhanced_result['status']}")
+        
+        # Example 3: Custom filter chain
+        print("\n--- Example 3: Custom Filter Chain ---")
+        custom_result = get_prefiltered_datasets_custom_chain(
+            conn=conn,
+            custom_filters=['initial', 'basic', 'organism', 'single_cell', 'limit'],
             filter_params={
                 'organisms': ['human'],
-                'search_term': 'brain',
-                'limit': 5
+                'min_sc_confidence': 3,
+                'limit': 10
             }
         )
-        print(f"Result 2: {len(result2)} records\n")
-        
-        print("=== Example 3: Step-by-step manual filtering ===")
-        # Manually create filter chain, can stop or modify at any step
-        initial_filter = InitialDatasetFilter(conn)
-        basic_filter = BasicAvailabilityFilter(conn)
-        organism_filter = OrganismFilter(conn, ["human"])
-        sc_filter = SingleCellFilter(conn, min_confidence=2)
-        
-        # Apply step-by-step
-        result = initial_filter.apply()
-        result = basic_filter.apply(result)
-        result = organism_filter.apply(result)
-        result = sc_filter.apply(result)
-        
-        print(f"Result 3: {result.count} records")
+        print(f"Custom Chain Result: {len(custom_result)} records")
+
 
 # main
 if __name__ == "__main__":
     from dotenv import load_dotenv
     load_dotenv()
     
-    try:
-        from SRAgent.db.connect import db_connect
-    except ImportError:
-        try:
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            project_root = os.path.dirname(os.path.dirname(current_dir))
-            sys.path.insert(0, project_root)
-            from SRAgent.db.connect import db_connect
-        except ImportError:
-            print("Cannot import db_connect. Please check import paths.")
-            sys.exit(1)
+    os.environ["DYNACONF"] = "test"  
+
+    # Run tests
+    print("🧪 Running module tests...")
+    print(f"📦 Available modules: {list(MODULES.keys())}")
+
+    # Test basic functionality first
+    test_basic_prefiltering()
     
-    os.environ["DYNACONF"] = "test"
-    try: 
-        with db_connect() as conn:
-            # Run example
-            example_usage()
-            
-            # Original test code with error handling 
-            print("=== Original test functions ===")
-            try:
-                eval_result = db_get_eval(conn, ["eval1"])
-                print("db_get_eval result:", eval_result)
-            except Exception as e:
-                print(f"db_get_eval error: {e}")
-
-            try:
-                srx_records = db_get_srx_records(conn)
-                print("db_get_srx_records count:", len(srx_records) if srx_records else 0)
-            except Exception as e:
-                print(f"db_get_srx_records error: {e}")
-
-            try:
-                unprocessed = db_get_unprocessed_records(conn)
-                print("db_get_unprocessed_records count:", len(unprocessed) if unprocessed else 0)
-            except Exception as e:
-                print(f"db_get_unprocessed_records error: {e}")
-
-            try:
-                srx_accessions = db_get_srx_accessions(conn)
-                print("srx_accessions count:", len(srx_accessions))
-            except Exception as e:
-                print(f"db_get_srx_accessions error: {e}")
-
-            try:
-                find_result = db_find_srx(["SRX19162973"], conn)
-                print("db_find_srx result shape:", find_result.shape if hasattr(find_result, 'shape') else len(find_result))
-            except Exception as e:
-                print(f"db_find_srx error: {e}")
-
-            #Example usage for the new function  
-            metadata = db_get_filtered_srx_metadata(
-                conn, 
-                organism="Homo sapiens",
-                is_single_cell="yes",
-                limit=100
-            )
-            print("Filtered metadata shape:", metadata.shape if hasattr(metadata, 'shape') else len(metadata))
-
-    except Exception as e:
-        print(f"Database connection error: {e}")
-        import traceback
-        traceback.print_exc()
-        print(db_find_srx(["SRX19162973"], conn))
-        
+    # Test enhanced functionality if modules are available
+    if MODULES.get('enhanced_metadata') and MODULES.get('categorize'):
+        test_enhanced_workflow()
+    else:
+        print("\n⚠️ Enhanced workflow skipped - missing required modules:")
+        if not MODULES.get('enhanced_metadata'):
+            print("   - enhanced_metadata module")
+        if not MODULES.get('categorize'):
+            print("   - categorize module")
+    
+    print("\n🎯 Tests completed!")
