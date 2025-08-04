@@ -6,27 +6,28 @@ from psycopg2.extensions import connection
 import logging
 from datetime import datetime  
 
-# import prefilter module
-# Fix relative import issue
-try:
-    # Try relative import first (when used as module)
-    from .prefilter import (
-        FilterResult, 
-        create_filter_chain, 
-        apply_filter_chain,
-        InitialDatasetFilter,
-        BasicAvailabilityFilter,
-        OrganismFilter,
-        SingleCellFilter,
-        SequencingStrategyFilter,
-        CancerStatusFilter,
-        TissueSourceFilter,
-        KeywordSearchFilter,
-        LimitFilter
-    )
-    from .utils import execute_query
-except ImportError:
-    # Fallback for direct execution
+
+# Fix import path issues
+def setup_imports():
+    """Setup proper import paths for the module"""
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    parent_dir = os.path.dirname(current_dir)
+    project_root = os.path.dirname(parent_dir)
+    
+    # Add paths to sys.path if not already present
+    for path in [current_dir, parent_dir, project_root]:
+        if path not in sys.path:
+            sys.path.insert(0, path)
+
+# Setup imports first
+setup_imports()
+
+# Now import modules with proper error handling
+def import_required_modules():
+    """Import required modules with fallback strategies"""
+    modules = {}
+    
+    # Try importing prefilter module
     try:
         from prefilter import (
             FilterResult, 
@@ -42,13 +43,82 @@ except ImportError:
             KeywordSearchFilter,
             LimitFilter
         )
-        try:
-            from utils import execute_query
-        except ImportError:
-            from .utils import execute_query
+        modules['prefilter'] = {
+            'FilterResult': FilterResult,
+            'create_filter_chain': create_filter_chain,
+            'apply_filter_chain': apply_filter_chain,
+            'filters': {
+                'InitialDatasetFilter': InitialDatasetFilter,
+                'BasicAvailabilityFilter': BasicAvailabilityFilter,
+                'OrganismFilter': OrganismFilter,
+                'SingleCellFilter': SingleCellFilter,
+                'SequencingStrategyFilter': SequencingStrategyFilter,
+                'CancerStatusFilter': CancerStatusFilter,
+                'TissueSourceFilter': TissueSourceFilter,
+                'KeywordSearchFilter': KeywordSearchFilter,
+                'LimitFilter': LimitFilter
+            }
+        }
+    except ImportError as e:
+        print(f"❌ Cannot import prefilter module: {e}")
+        print("Please ensure prefilter.py is in the same directory or in your Python path")
+        return None
+    
+    # Try importing utils
+    try:
+        from utils import execute_query
+        modules['utils'] = {'execute_query': execute_query}
     except ImportError:
-        print("❌ Cannot import prefilter module. Please check your setup.")
-        sys.exit(1)
+        try:
+            # Try alternative import path
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            utils_path = os.path.join(current_dir, 'utils.py')
+            if os.path.exists(utils_path):
+                import importlib.util
+                spec = importlib.util.spec_from_file_location("utils", utils_path)
+                utils_module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(utils_module)
+                modules['utils'] = {'execute_query': utils_module.execute_query}
+            else:
+                print("⚠️ Warning: utils module not found, some functionality may be limited")
+                modules['utils'] = None
+        except Exception as e:
+            print(f"⚠️ Warning: Could not import utils: {e}")
+            modules['utils'] = None
+    
+    # Try importing export modules
+    try:
+        # Try to import enhanced_metadata
+        try:
+            from enhanced_metadata import EnhancedMetadataExtractor, enhance_existing_categorize_workflow
+            modules['enhanced_metadata'] = {
+                'EnhancedMetadataExtractor': EnhancedMetadataExtractor,
+                'enhance_existing_categorize_workflow': enhance_existing_categorize_workflow
+            }
+        except ImportError:
+            print("⚠️ Warning: enhanced_metadata module not found")
+            modules['enhanced_metadata'] = None
+        
+        # Try to import categorize module
+        try:
+            from categorize import categorize_datasets_by_project
+            modules['categorize'] = {'categorize_datasets_by_project': categorize_datasets_by_project}
+        except ImportError:
+            print("⚠️ Warning: categorize module not found")
+            modules['categorize'] = None
+            
+    except Exception as e:
+        print(f"⚠️ Warning: Could not import export modules: {e}")
+        modules['enhanced_metadata'] = None
+        modules['categorize'] = None
+    
+    return modules
+
+# Import modules
+MODULES = import_required_modules()
+if MODULES is None:
+    print("❌ Critical modules missing. Exiting.")
+    sys.exit(1)
 
 logger = logging.getLogger(__name__)
 
@@ -80,8 +150,13 @@ def get_prefiltered_datasets_functional(
         Prefiltered DataFrame
     """
     try:
+        # Check iof prefilter module is available  
+        if not MODULES.get('prefilter'):
+            logger.error("prefilter module not available")
+            return pd.DataFrame()
+
         # Create filter chain
-        filter_chain = create_filter_chain(
+        filter_chain = MODULES['prefilter']['create_filter_chain'](
             conn=conn,
             organisms=organisms,
             search_term=search_term,
@@ -90,7 +165,7 @@ def get_prefiltered_datasets_functional(
         )
         
         # Apply filter chain
-        final_result = apply_filter_chain(filter_chain)
+        final_result = MODULES['prefilter']['apply_filter_chain'](filter_chain)
         
         # If needed, create temporary table
         if create_temp_table and not final_result.data.empty:
@@ -101,6 +176,58 @@ def get_prefiltered_datasets_functional(
     except Exception as e:
         logger.error(f"Prefiltering failed: {e}")
         return pd.DataFrame()
+
+def get_enhanced_prefiltered_datasets(
+    conn: connection,
+    organisms: List[str] = ['human'],
+    search_term: Optional[str] = None, 
+    limit: int = 20000000,
+    min_sc_confidence: int = 2,
+    output_format: str = "ai_optimized"  # "ai_optimized", "standard", "both"
+) -> Dict[str, Any]:
+    """Enhanced version of prefiltering with AI-optimized output
+    
+    Returns both standard Dataframe and AI-optimized hierarchical structure
+    """
+    try:
+        # Use exisiting prefilter function 
+        result_df = get_prefiltered_datasets_functional(
+            conn= conn, 
+            organisms=organisms,
+            search_term=search_term,
+            limit=limit,
+            min_sc_confidence=min_sc_confidence
+        )
+
+        if result_df.empty:
+            return {"status": "no_data", "data": pd.DataFrame(), "ai_data": {}}
+
+        # Apply categorization and enhancement
+        ai_data = {}
+        
+        # Check if categorize module is available
+        if MODULES.get('categorize'):
+            categorized = MODULES['categorize']['categorize_datasets_by_project'](result_df)
+            
+            # Check if enhanced_metadata module is available
+            if MODULES.get('enhanced_metadata') and output_format in ["ai_optimized", "both"]:
+                extractor = MODULES['enhanced_metadata']['EnhancedMetadataExtractor']()
+                ai_data = extractor.extract_hierarchical_metadata_from_db(conn, categorized)
+        else:
+            logger.warning("Categorize module not available, returning standard data only")
+        
+        if output_format == "ai_optimized":
+            return {"status": "success", "ai_data": ai_data}
+        elif output_format == "both":
+            return {"status": "success", "data": result_df, "ai_data": ai_data}
+        else:
+            return {"status": "success", "data": result_df}
+            
+    except Exception as e:
+        logger.error(f"Enhanced prefiltering failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return {"status": "error", "message": str(e)}
 
 def get_prefiltered_datasets_custom_chain(
     conn: connection,
@@ -120,19 +247,13 @@ def get_prefiltered_datasets_custom_chain(
     """
     if filter_params is None:
         filter_params = {}
+
+    if not MODULES.get('prefilter'):
+        logger.error("prefilter module not available")
+        return pd.DataFrame()
     
     # Map filter names to classes
-    filter_map = {
-        'initial': InitialDatasetFilter,
-        'basic': BasicAvailabilityFilter,
-        'organism': OrganismFilter,
-        'single_cell': SingleCellFilter,
-        'sequencing': SequencingStrategyFilter,
-        'cancer': CancerStatusFilter,
-        'tissue': TissueSourceFilter,
-        'keyword': KeywordSearchFilter,
-        'limit': LimitFilter
-    }
+    filter_map = MODULES['prefilter']['filters']
     
     try:
         # Build custom filter chain
@@ -140,11 +261,12 @@ def get_prefiltered_datasets_custom_chain(
         result = None
         
         for filter_name in custom_filters:
-            if filter_name not in filter_map:
+            filter_class_name = f"{filter_name.title()}Filter"
+            if filter_class_name not in filter_map:
                 logger.warning(f"Unknown filter: {filter_name}")
                 continue
             
-            filter_class = filter_map[filter_name]
+            filter_class = filter_map[filter_class_name]
             
             # Create instance based on filter type
             if filter_name == 'organism':
@@ -285,74 +407,162 @@ def check_table_structure(conn):
         print(f"❌ Failed to check table structure: {e}")
         return []
 
+def test_enhanced_workflow():
+    """
+    Test the enhanced workflow with better error handling
+    """
+    try:
+        # Import db_connect with proper error handling
+        try:
+            from connect import db_connect
+        except ImportError:
+            try:
+                current_dir = os.path.dirname(os.path.abspath(__file__))
+                project_root = os.path.dirname(os.path.dirname(current_dir))
+                sys.path.insert(0, os.path.join(project_root, 'SRAgent', 'db'))
+                from connect import db_connect
+            except ImportError:
+                print("❌ Cannot import db_connect. Please check your setup.")
+                return
+        
+        with db_connect() as conn: 
+            print("=== Testing Enhanced Workflow ===")
+
+            # Test with small dataset  
+            result = get_enhanced_prefiltered_datasets(
+                conn=conn, 
+                organisms=["human"],
+                search_term="cancer",
+                limit=10,
+                output_format="both"
+            )
+
+            if result["status"] == "success":
+                print(f"✅ Enhanced workflow successful!")
+                if "data" in result:
+                    print(f"📊 Standard data: {len(result['data'])} records")
+                if "ai_data" in result and result['ai_data']:
+                    hierarchical_data = result['ai_data'].get('hierarchical_data', {})
+                    if hierarchical_data:
+                        total_experiments = sum(
+                            data.get('category_summary', {}).get('total_experiments', 0) 
+                            for data in hierarchical_data.values()
+                        )
+                        print(f"🤖 AI-optimized data: {total_experiments} experiments")
+                        
+                        # Show structure
+                        for category, data in hierarchical_data.items():
+                            if data.get('experiments'):
+                                exp_count = len(data['experiments'])
+                                print(f"  - {category}: {exp_count} experiments")
+                    else:
+                        print("🤖 AI-optimized data: No hierarchical data generated")
+                else:
+                    print("🤖 AI-optimized data: Not available (missing modules)")
+            else:
+                print(f"❌ Enhanced workflow failed: {result.get('message')}")
+                    
+    except Exception as e:
+        print(f"❌ Test failed: {e}")
+        import traceback
+        traceback.print_exc()
+
+def test_basic_prefiltering():
+    """
+    Test basic prefiltering functionality
+    """
+    try:
+        # Import db_connect with proper error handling
+        try:
+            from connect import db_connect
+        except ImportError:
+            try:
+                current_dir = os.path.dirname(os.path.abspath(__file__))
+                project_root = os.path.dirname(os.path.dirname(current_dir))
+                sys.path.insert(0, os.path.join(project_root, 'SRAgent', 'db'))
+                from connect import db_connect
+            except ImportError:
+                print("❌ Cannot import db_connect. Please check your setup.")
+                return
+        
+        with db_connect() as conn:
+            print("=== Testing Basic Prefiltering ===")
+            
+            result_df = get_prefiltered_datasets_functional(
+                conn=conn,
+                organisms=["human"],
+                search_term="cancer",
+                limit=10
+            )
+            
+            if not result_df.empty:
+                print(f"✅ Basic prefiltering successful: {len(result_df)} records")
+                
+                # Show some column info
+                print("📊 Columns in result:")
+                for i, col in enumerate(result_df.columns[:10], 1):  # Show first 10 columns
+                    print(f"  {i:2d}. {col}")
+                if len(result_df.columns) > 10:
+                    print(f"     ... and {len(result_df.columns) - 10} more columns")
+                    
+            else:
+                print("❌ Basic prefiltering returned no results")
+                
+    except Exception as e:
+        print(f"❌ Basic prefiltering test failed: {e}")
+        import traceback
+        traceback.print_exc()
+
 # Example usage function
 def example_usage():
     """
-    Show how to use the new prefiltering and export system
+    Show how to use the new prefiltering system
     """
     from dotenv import load_dotenv
+    load_dotenv()
+    
     try:
         from connect import db_connect
     except ImportError:
-        try:
-            import sys
-            import os
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            project_root = os.path.dirname(os.path.dirname(current_dir))
-            sys.path.insert(0, project_root)
-            from SRAgent.db.connect import db_connect
-        except ImportError:
-            print("Cannot import db_connect. Please check import paths.")
-            return
-    
-    load_dotenv()
+        print("❌ Cannot import db_connect. Please check your setup.")
+        return
     
     with db_connect() as conn:
-        print("=== Example 1: JSON Export with Full Categorization ===")
-        result1 = export_prefiltered_datasets_to_json(
+        print("=== Example Usage ===")
+        
+        # Example 1: Basic functional prefiltering
+        print("\n--- Example 1: Basic Prefiltering ---")
+        result_df = get_prefiltered_datasets_functional(
             conn=conn,
-            output_path="exports/example_datasets.json",
             organisms=["human"],
             search_term="cancer",
-            limit=50,
-            include_categorization=True,
-            include_grouping=True
+            limit=20
         )
-        print(f"JSON Export Result: {result1['status']}")
+        print(f"Result: {len(result_df)} records")
         
-        print("\n=== Example 2: SQLite Export ===")
-        result2 = export_prefiltered_datasets_to_sqlite(
+        # Example 2: Enhanced prefiltering with AI optimization
+        print("\n--- Example 2: Enhanced Prefiltering ---")
+        enhanced_result = get_enhanced_prefiltered_datasets(
             conn=conn,
-            output_path="exports/example_datasets.db",
             organisms=["human"],
             search_term="brain",
-            limit=30,
-            create_categorized_tables=True
+            limit=15,
+            output_format="both"
         )
-        print(f"SQLite Export Result: {result2['status']}")
+        print(f"Enhanced Result Status: {enhanced_result['status']}")
         
-        print("\n=== Example 3: Classify-Ready Export ===")
-        result3 = create_classify_ready_export(
+        # Example 3: Custom filter chain
+        print("\n--- Example 3: Custom Filter Chain ---")
+        custom_result = get_prefiltered_datasets_custom_chain(
             conn=conn,
-            output_dir="exports/classify_ready",
-            organisms=["human"],
-            search_term="single cell",
-            limit=100,
-            export_format="json"
+            custom_filters=['initial', 'basic', 'organism', 'single_cell', 'limit'],
+            filter_params={
+                'organisms': ['human'],
+                'min_sc_confidence': 3,
+                'limit': 10
+            }
         )
-        print(f"Classify-Ready Export Result: {result3['status']}")
-
-        # export function
-        print("\n=== Export Examples ===")
-        from .export import create_classify_ready_export
-    
-        result = create_classify_ready_export(
-            conn=conn,
-            output_dir="exports/classify_ready",
-            organisms=["human"],
-            export_format="json"
-        )
-        print(f"Export Result: {result['status']}")
+        print(f"Custom Chain Result: {len(custom_result)} records")
 
 
 # main
@@ -360,136 +570,23 @@ if __name__ == "__main__":
     from dotenv import load_dotenv
     load_dotenv()
     
-    try:
-        from SRAgent.db.connect import db_connect
-    except ImportError:
-        print("Cannot import db_connect. Please check import paths.")
-        sys.exit(1)
-    
     os.environ["DYNACONF"] = "test"  
 
-    def test_export_functionality(conn, df):
-        """
-        Temporary test the export function
-        """
-        try:
-            import json
-            from pathlib import Path
-            
-            if df.empty:
-                print("No data to export")
-                return {"status": "no_data"}
-            
-            # simple project categorization test
-            def categorize_test(df):
-                categorized = {'GSE': [], 'PRJNA': [], 'ena-STUDY': [], 'discarded': []}
-                records = df.to_dict(orient='records')
+    # Run tests
+    print("🧪 Running module tests...")
+    print(f"📦 Available modules: {list(MODULES.keys())}")
 
-                
-                for record in records:
-                    project_id = None
-
-                    search_fields = ['study_alias', 'sra_ID', 'run_alias', 'experiment_alias', 
-                        'sample_alias', 'submission_alias', 'gsm_title']
-
-                    for field in ['sra_study_accession', 'bioproject_accession', 'study_accession']:
-                        if field in record and record[field]:
-                            value = str(record[field]).strip()
-                            if value and value != 'nan' and value != 'None':
-                                project_id = value
-                                break
-                    
-                    if not project_id:
-                        categorized['discarded'].append(record)
-                        continue
-                        
-                    if project_id.startswith('GSE'):
-                        categorized['GSE'].append(record)
-                    elif project_id.startswith('PRJNA'):
-                        categorized['PRJNA'].append(record)
-                    elif project_id.startswith('ena-STUDY'):
-                        categorized['ena-STUDY'].append(record)
-                    else:
-                        categorized['discarded'].append(record)
-                
-                return categorized
-            
-            # execute the categorization
-            categorized = categorize_test(df)
-            
-            # create the export data
-            export_data = {
-                "export_metadata": {
-                    "timestamp": datetime.now().isoformat(),
-                    "total_records": len(df),
-                    "test_export": True,
-                    "categorization_stats": {
-                        category: len(records) for category, records in categorized.items()
-                    }
-                },
-                "raw_data": df.to_dict(orient='records'),
-                "categorized_data": categorized
-            }
-            
-            # create the output directory
-            output_dir = Path("test_export")
-            output_dir.mkdir(exist_ok=True)
-            
-            # write the main file
-            with open(output_dir / "test_datasets.json", "w") as f:
-                json.dump(export_data, f, indent=2, default=str)
-            
-            # create separate files for each category
-            for category, records in categorized.items():
-                if records:
-                    category_file = output_dir / f"{category.lower()}_projects.json"
-                    with open(category_file, "w") as f:
-                        json.dump({
-                            "category": category,
-                            "count": len(records),
-                            "projects": records
-                        }, f, indent=2, default=str)
-            
-            print(f"✅ Test export successful!")
-            print(f"   📁 Output directory: {output_dir}")
-            print(f"   📊 Total records: {len(df)}")
-            print(f"   📋 Categorization:")
-            for category, records in categorized.items():
-                if records:
-                    print(f"      - {category}: {len(records)} records")
-            
-            return {"status": "success", "output_dir": str(output_dir)}
-            
-        except Exception as e:
-            print(f"❌ Test export failed: {e}")
-            import traceback
-            traceback.print_exc()
-            return {"status": "error", "message": str(e)}
-
-    try: 
-        with db_connect() as conn:
-            # Testing prefilter functions
-            print("=== Testing prefilter functions ===")
-
-            result_df = get_prefiltered_datasets_functional(
-                conn=conn,
-                organisms=["human"],
-                search_term="cancer",
-                limit=10
-            )
-            print(f"Prefilter result: {len(result_df)} records")
-            
-            # Testing export functions 
-            print("\n=== Testing export functions ===")
-            export_result = test_export_functionality(conn, result_df)
-
-            if export_result["status"] == "success":
-                print("\n All tests passed! Ready for module refactoring.")
-            else:
-                print(f"\n Export test had issues: {export_result.get('message', 'Unknown error')}")
+    # Test basic functionality first
+    test_basic_prefiltering()
     
-    except Exception as e:
-        print(f"Database connection error: {e}")
-        import traceback
-        traceback.print_exc()
+    # Test enhanced functionality if modules are available
+    if MODULES.get('enhanced_metadata') and MODULES.get('categorize'):
+        test_enhanced_workflow()
+    else:
+        print("\n⚠️ Enhanced workflow skipped - missing required modules:")
+        if not MODULES.get('enhanced_metadata'):
+            print("   - enhanced_metadata module")
+        if not MODULES.get('categorize'):
+            print("   - categorize module")
     
+    print("\n🎯 Tests completed!")

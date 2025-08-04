@@ -7,10 +7,33 @@ import logging
 
 from .json_export import export_prefiltered_datasets_to_json
 from .db_export import export_prefiltered_datasets_to_sqlite, export_prefiltered_datasets_to_postgres
+from .enhanced_export import enhance_existing_categorize_workflow
 from ..connect import db_connect
 
 logger = logging.getLogger(__name__)
 
+
+# Integration with existing categorize.py
+def enhance_existing_categorize_workflow(
+    conn: connection,
+    categorized_data: Dict[str, List[Dict]]
+) -> Dict[str, Any]:
+    """
+    Drop-in enhancement for existing categorize workflow
+    
+    Usage in categorize.py:
+    ```python
+    from .enhanced_metadata import enhance_existing_categorize_workflow
+    
+    # After existing categorization
+    categorized = categorize_datasets_by_project(df)
+    
+    # Enhance with AI-optimized structure
+    enhanced_result = enhance_existing_categorize_workflow(conn, categorized)
+    ```
+    """
+    extractor = EnhancedMetadataExtractor()
+    return extractor.extract_hierarchical_metadata_from_db(conn, categorized_data)
 
 def categorize_datasets_by_project(df) -> Dict[str, List[Dict]]:
     """
@@ -22,10 +45,11 @@ def categorize_datasets_by_project(df) -> Dict[str, List[Dict]]:
     Returns:
         Dictionary with project types as keys and grouped datasets as values 
     """
-    catogrized = {
+    categorized = {
         'GSE': [],
         'PRJNA': [],
-        'ENA': []
+        'ENA': [],
+        'discarded': []
     }
 
     # Convert DataFrame to list of dictionaries for easier processng 
@@ -36,22 +60,34 @@ def categorize_datasets_by_project(df) -> Dict[str, List[Dict]]:
         project_id = None
         
         # Check stufy_alias for project identifiers 
-        for field in  ['study_alias', 'sample_alias']:
+        search_fields = ['study_alias', 'sra_ID', 'run_alias', 'experiment_alias',
+                         'sample_alias', 'submission_alias', 'gsm_title']
+
+        for field in search_fields:
             if field in record and record[field]:
-                project_id = str(record[field])
-                break
+                value = str(record[field]).strip()
+                if value and value != 'nan' and value != 'None':
+                    project_id = value 
+                    break
+        
+        if not project_id:
+            categorized['discarded'].append(record)
+            continue 
         
         # Categorize based on project prefix
         if project_id:
             if project_id.startswith('GSE'):
-                catogrized['GSE'].append(record)
+                categorized['GSE'].append(record)
             elif project_id.startswith('PRJNA'):
-                catogrized['PRJNA'].append(record)
+                categorized['PRJNA'].append(record)
             elif project_id.startswith('ena-STUDY'):
-                catogrized['ENA'].append(record)
-    return catogrized
+                categorized['ENA'].append(record)
+            else:
+                categorized['discarded'].append(record)
 
-def group_datasets_by_project_id(catogorized: Dict[str, List[Dict]]) -> Dict[str, Dict[str, List[Dict]]]:
+    return categorized
+
+def group_datasets_by_project_id(categorized: Dict[str, List[Dict]]) -> Dict[str, Dict[str, List[Dict]]]:
     """
     Group datasets by project ID within each category.
     
@@ -262,7 +298,9 @@ def run_export_workflow(
             else:
                 print(f"❌ Export failed: {result.get('message', 'Unknown error')}")
                 
-            return result
+            enhanced_result = enhance_existing_categorize_workflow(conn, result)
+
+            return enhanced_result
             
     except Exception as e:
         print(f"❌ Workflow failed: {e}")
