@@ -17,7 +17,13 @@ def create_enhanced_ai_workflow(
     organisms: List[str] = ["human"],
     search_term: str = None,
     limit: int = 1000,
-    output_dir: str = "enhanced_export"
+    output_dir: str = "enhanced_export",
+    output_formats: List[str] = ["json"],
+    categorize: bool = True,
+    min_sc_confidence: int = 2,
+    include_sequencing_strategy: bool = False,
+    include_cancer_status: bool = False,
+    include_search_term: bool = False
 ) -> Dict[str, Any]:
     """
     Complete enhanced workflow for AI-optimized metadata extraction
@@ -27,6 +33,22 @@ def create_enhanced_ai_workflow(
     2. Apply existing categorization
     3. Add enhanced AI-optimized structure
     4. Generate multiple output formats
+    
+    Args:
+        conn: Database connection
+        organisms: List of organisms, default ["human"]
+        search_term: Search keyword
+        limit: Limit on the number of records returned
+        output_dir: Directory to save output files
+        output_formats: List of output formats ("json", "markdown")
+        categorize: Whether to categorize datasets by project
+        min_sc_confidence: Minimum single-cell confidence score
+        include_sequencing_strategy: Whether to include sequencing strategy filter
+        include_cancer_status: Whether to include cancer status filter
+        include_search_term: Whether to include keyword search filter
+    
+    Returns:
+        Dictionary with workflow results
     """
     
     output_dir = Path(output_dir)
@@ -38,7 +60,11 @@ def create_enhanced_ai_workflow(
         conn=conn,
         organisms=organisms,
         search_term=search_term,
-        limit=limit
+        limit=limit,
+        min_sc_confidence=min_sc_confidence,
+        include_sequencing_strategy=include_sequencing_strategy,
+        include_cancer_status=include_cancer_status,
+        include_search_term=include_search_term
     )
     
     if df.empty:
@@ -306,6 +332,12 @@ def main():
     parser.add_argument('--search-term', default='cancer', help='Search term')
     parser.add_argument('--limit', type=int, default=100, help='Maximum records')
     parser.add_argument('--output-dir', default='enhanced_export', help='Output directory')
+    parser.add_argument('--output-formats', nargs='+', default=['json'], choices=['json', 'markdown'], help='Output formats')
+    parser.add_argument('--categorize', action='store_true', default=True, help='Categorize datasets by project')
+    parser.add_argument('--min-sc-confidence', type=int, default=2, help='Minimum single-cell confidence score')
+    parser.add_argument('--include-sequencing-strategy', action='store_true', help='Include sequencing strategy filter')
+    parser.add_argument('--include-cancer-status', action='store_true', help='Include cancer status filter')
+    parser.add_argument('--include-search-term', action='store_true', help='Include keyword search filter')
     
     args = parser.parse_args()
     
@@ -316,7 +348,13 @@ def main():
                 organisms=args.organisms,
                 search_term=args.search_term,
                 limit=args.limit,
-                output_dir=args.output_dir
+                output_dir=args.output_dir,
+                output_formats=args.output_formats,
+                categorize=args.categorize,
+                min_sc_confidence=args.min_sc_confidence,
+                include_sequencing_strategy=args.include_sequencing_strategy,
+                include_cancer_status=args.include_cancer_status,
+                include_search_term=args.include_search_term
             )
             
             if result["status"] == "success":

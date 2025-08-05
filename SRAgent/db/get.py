@@ -131,7 +131,10 @@ def get_prefiltered_datasets_functional(
     limit: int = 20000000,
     min_sc_confidence: int = 2,
     create_temp_table: bool = False,
-    temp_table_name: str = "temp_prefiltered_results"
+    temp_table_name: str = "temp_prefiltered_results",
+    include_sequencing_strategy: bool = False,
+    include_cancer_status: bool = False,
+    include_search_term: bool = False
 ) -> pd.DataFrame:
     """
     Prefilter datasets using a functional prefiltering approach, where each filter
@@ -145,12 +148,15 @@ def get_prefiltered_datasets_functional(
         min_sc_confidence: Minimum single-cell confidence score
         create_temp_table: Whether to create a temporary table
         temp_table_name: Name of the temporary table
+        include_sequencing_strategy: Whether to include sequencing strategy filter
+        include_cancer_status: Whether to include cancer status filter
+        include_search_term: Whether to include keyword search filter
     
     Returns:
         Prefiltered DataFrame
     """
     try:
-        # Check iof prefilter module is available  
+        # Check if prefilter module is available  
         if not MODULES.get('prefilter'):
             logger.error("prefilter module not available")
             return pd.DataFrame()
@@ -161,7 +167,10 @@ def get_prefiltered_datasets_functional(
             organisms=organisms,
             search_term=search_term,
             limit=limit,
-            min_sc_confidence=min_sc_confidence
+            min_sc_confidence=min_sc_confidence,
+            include_sequencing_strategy=include_sequencing_strategy,
+            include_cancer_status=include_cancer_status,
+            include_search_term=include_search_term
         )
         
         # Apply filter chain
@@ -183,11 +192,26 @@ def get_enhanced_prefiltered_datasets(
     search_term: Optional[str] = None, 
     limit: int = 20000000,
     min_sc_confidence: int = 2,
-    output_format: str = "ai_optimized"  # "ai_optimized", "standard", "both"
+    output_format: str = "ai_optimized",  # "ai_optimized", "standard", "both"
+    include_sequencing_strategy: bool = False,
+    include_cancer_status: bool = False,
+    include_search_term: bool = False
 ) -> Dict[str, Any]:
     """Enhanced version of prefiltering with AI-optimized output
     
-    Returns both standard Dataframe and AI-optimized hierarchical structure
+    Args:
+        conn: Database connection
+        organisms: List of organisms, default ['human']
+        search_term: Search keyword
+        limit: Limit on the number of records returned
+        min_sc_confidence: Minimum single-cell confidence score
+        output_format: Output format ("ai_optimized", "standard", "both")
+        include_sequencing_strategy: Whether to include sequencing strategy filter
+        include_cancer_status: Whether to include cancer status filter
+        include_search_term: Whether to include keyword search filter
+    
+    Returns:
+        Dictionary with prefiltered data in requested format
     """
     try:
         # Use exisiting prefilter function 
@@ -196,7 +220,10 @@ def get_enhanced_prefiltered_datasets(
             organisms=organisms,
             search_term=search_term,
             limit=limit,
-            min_sc_confidence=min_sc_confidence
+            min_sc_confidence=min_sc_confidence,
+            include_sequencing_strategy=include_sequencing_strategy,
+            include_cancer_status=include_cancer_status,
+            include_search_term=include_search_term
         )
 
         if result_df.empty:
@@ -434,7 +461,10 @@ def test_enhanced_workflow():
                 organisms=["human"],
                 search_term="cancer",
                 limit=10,
-                output_format="both"
+                output_format="both",
+                include_sequencing_strategy=True,
+                include_cancer_status=True,
+                include_search_term=True
             )
 
             if result["status"] == "success":
