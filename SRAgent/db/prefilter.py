@@ -603,21 +603,49 @@ def create_filter_chain(conn: connection,
                        organisms: List[str] = ["human"],
                        search_term: Optional[str] = None,
                        limit: int = 100,
-                       min_sc_confidence: int = 2) -> List[BaseFilter]:
+                       min_sc_confidence: int = 2,
+                       include_sequencing_strategy: bool = False,
+                       include_cancer_status: bool = False,
+                       include_search_term: bool = False) -> List[BaseFilter]:
     """
     Create a prefilter chain.
+    
+    Args:
+        conn: Database connection
+        organisms: List of organisms, default ["human"]
+        search_term: Search keyword
+        limit: Limit on the number of records returned
+        min_sc_confidence: Minimum single-cell confidence score
+        include_sequencing_strategy: Whether to include sequencing strategy filter
+        include_cancer_status: Whether to include cancer status filter
+        include_search_term: Whether to include keyword search filter
+    
+    Returns:
+        List of filter objects
     """
-    return [
+    # Create base filters that are always included
+    filters = [
         InitialDatasetFilter(conn),
         BasicAvailabilityFilter(conn),
         OrganismFilter(conn, organisms),
         SingleCellFilter(conn, min_sc_confidence),
-        SequencingStrategyFilter(conn),
-        CancerStatusFilter(conn),
-        TissueSourceFilter(conn),
-        KeywordSearchFilter(conn, search_term),
-        LimitFilter(conn, limit)
+        TissueSourceFilter(conn)
     ]
+    
+    # Add optional filters based on parameters
+    if include_sequencing_strategy:
+        filters.append(SequencingStrategyFilter(conn))
+    
+    if include_cancer_status:
+        filters.append(CancerStatusFilter(conn))
+    
+    if include_search_term and search_term:
+        filters.append(KeywordSearchFilter(conn, search_term))
+    
+    # Always add limit filter at the end
+    filters.append(LimitFilter(conn, limit))
+    
+    return filters
 
 def apply_filter_chain(filter_chain: List[BaseFilter]) -> FilterResult:
     """
@@ -651,21 +679,49 @@ class FilterChainManager:
                             search_term: Optional[str] = None,
                             limit: int = 100,
                             min_sc_confidence: int = 2,
-                            use_sc_fallback: bool = True) -> List[BaseFilter]:
+                            use_sc_fallback: bool = True,
+                            include_sequencing_strategy: bool = False,
+                            include_cancer_status: bool = False,
+                            include_search_term: bool = False) -> List[BaseFilter]:
         """
         Create a standard filter chain with enhanced options.
+        
+        Args:
+            organisms: List of organisms, default ["human"]
+            search_term: Search keyword
+            limit: Limit on the number of records returned
+            min_sc_confidence: Minimum single-cell confidence score
+            use_sc_fallback: Whether to use fallback strategy for single cell detection
+            include_sequencing_strategy: Whether to include sequencing strategy filter
+            include_cancer_status: Whether to include cancer status filter
+            include_search_term: Whether to include keyword search filter
+        
+        Returns:
+            List of filter objects
         """
-        return [
+        # Create base filters that are always included
+        filters = [
             InitialDatasetFilter(self.conn),
             BasicAvailabilityFilter(self.conn),
             OrganismFilter(self.conn, organisms),
             SingleCellFilter(self.conn, min_sc_confidence, use_sc_fallback),
-            SequencingStrategyFilter(self.conn),
-            CancerStatusFilter(self.conn),
-            TissueSourceFilter(self.conn),
-            KeywordSearchFilter(self.conn, search_term),
-            LimitFilter(self.conn, limit)
+            TissueSourceFilter(self.conn)
         ]
+        
+        # Add optional filters based on parameters
+        if include_sequencing_strategy:
+            filters.append(SequencingStrategyFilter(self.conn))
+        
+        if include_cancer_status:
+            filters.append(CancerStatusFilter(self.conn))
+        
+        if include_search_term and search_term:
+            filters.append(KeywordSearchFilter(self.conn, search_term))
+        
+        # Always add limit filter at the end
+        filters.append(LimitFilter(self.conn, limit))
+        
+        return filters
     
     def apply_chain(self, filter_chain: List[BaseFilter], 
                    stop_on_empty: bool = True,
