@@ -8,8 +8,8 @@ from datetime import datetime
 
 # Import existing modules
 from ..get import get_prefiltered_datasets_functional
-from .categorize import categorize_datasets_by_project
-from .enhanced_metadata import EnhancedMetadataExtractor, LocalPostgreSQLAdapter
+from ..categorize import categorize_datasets_by_project
+from ..enhanced_metadata import EnhancedMetadataExtractor, LocalPostgreSQLAdapter
 from ..connect import db_connect
 
 def create_enhanced_ai_workflow(

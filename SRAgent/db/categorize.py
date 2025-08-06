@@ -5,6 +5,7 @@ Fixed version - ensures proper imports and function definitions
 import pandas as pd
 from typing import Dict, List, Any
 import logging
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +102,57 @@ def categorize_datasets_by_project(df: pd.DataFrame) -> Dict[str, List[Dict]]:
         return {'GSE': [], 'PRJNA': [], 'ena-STUDY': [], 'E-MTAB': [], 'discarded': []}
 
 
+def group_datasets_by_project_id(categorized_data: Dict[str, List[Dict]]) -> Dict[str, Dict[str, List[Dict]]]:
+    """
+    Group categorized datasets by project ID
+    
+    Args:
+        categorized_data: Output from categorize_datasets_by_project
+        
+    Returns:
+        Dictionary with datasets grouped by project ID within each category
+    """
+    try:
+        grouped = {}
+        
+        for category, records in categorized_data.items():
+            if category == 'discarded':
+                grouped[category] = records
+                continue
+                
+            # Group by project ID
+            projects = {}
+            for record in records:
+                # Determine project ID based on category
+                if category == 'GSE':
+                    project_id = next((str(record[field]) for field in ['gse_title', 'study_alias'] 
+                                     if field in record and record[field] and str(record[field]).startswith('GSE')), 'unknown')
+                elif category == 'PRJNA':
+                    project_id = next((str(record[field]) for field in ['study_alias', 'sra_ID'] 
+                                     if field in record and record[field] and str(record[field]).startswith('PRJNA')), 'unknown')
+                elif category == 'ena-STUDY':
+                    project_id = next((str(record[field]) for field in ['study_alias', 'sra_ID'] 
+                                     if field in record and record[field] and str(record[field]).startswith('ena-STUDY')), 'unknown')
+                elif category == 'E-MTAB':
+                    project_id = next((str(record[field]) for field in ['study_alias', 'sra_ID'] 
+                                     if field in record and record[field] and str(record[field]).startswith('E-MTAB')), 'unknown')
+                else:
+                    project_id = 'unknown'
+                
+                # Add to projects dictionary
+                if project_id not in projects:
+                    projects[project_id] = []
+                projects[project_id].append(record)
+            
+            grouped[category] = projects
+        
+        return grouped
+        
+    except Exception as e:
+        logger.error(f"Error in group_datasets_by_project_id: {e}")
+        return {category: {} for category in categorized_data.keys()}
+
+
 def get_project_statistics(categorized_data: Dict[str, List[Dict]]) -> Dict[str, Any]:
     """
     Get statistics about categorized projects
@@ -144,6 +196,64 @@ def get_project_statistics(categorized_data: Dict[str, List[Dict]]) -> Dict[str,
         return {'total_records': 0, 'categories': {}, 'top_studies': {}}
 
 
+def create_classify_ready_export(categorized_data: Dict[str, List[Dict]]) -> Dict[str, Any]:
+    """
+    Create a classification-ready export structure from categorized data
+    
+    Args:
+        categorized_data: Output from categorize_datasets_by_project
+        
+    Returns:
+        Dictionary with classification-ready structure
+    """
+    try:
+        # Group data by project ID
+        grouped_data = group_datasets_by_project_id(categorized_data)
+        
+        # Get statistics
+        stats = get_project_statistics(categorized_data)
+        
+        # Create export structure
+        export_data = {
+            "metadata": {
+                "timestamp": datetime.now().isoformat(),
+                "statistics": stats
+            },
+            "categorized_data": categorized_data,
+            "grouped_data": grouped_data
+        }
+        
+        return export_data
+        
+    except Exception as e:
+        logger.error(f"Error in create_classify_ready_export: {e}")
+        return {"error": str(e)}
+
+
+def run_export_workflow(df: pd.DataFrame) -> Dict[str, Any]:
+    """
+    Run the complete export workflow: categorize, group, and prepare for export
+    
+    Args:
+        df: DataFrame with dataset records
+        
+    Returns:
+        Dictionary with complete export structure
+    """
+    try:
+        # Step 1: Categorize datasets
+        categorized = categorize_datasets_by_project(df)
+        
+        # Step 2: Create export-ready structure
+        export_data = create_classify_ready_export(categorized)
+        
+        return export_data
+        
+    except Exception as e:
+        logger.error(f"Error in run_export_workflow: {e}")
+        return {"error": str(e)}
+
+
 # Test function to verify the module works
 def test_categorize_module():
     """Test the categorize module functionality"""
@@ -168,6 +278,14 @@ def test_categorize_module():
         # Test statistics
         stats = get_project_statistics(categorized)
         print(f"✅ Statistics test successful: {stats['total_records']} total records")
+        
+        # Test grouping
+        grouped = group_datasets_by_project_id(categorized)
+        print(f"✅ Grouping test successful")
+        
+        # Test complete workflow
+        export_data = run_export_workflow(sample_data)
+        print(f"✅ Export workflow test successful")
         
         return True
         

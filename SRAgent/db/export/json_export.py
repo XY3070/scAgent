@@ -7,7 +7,7 @@ import logging
 from psycopg2.extensions import connection
 
 from ..get import get_prefiltered_datasets_functional
-from .categorize import categorize_datasets_by_project, group_datasets_by_project_id
+from ..categorize import categorize_datasets_by_project, group_datasets_by_project_id
 
 logger = logging.getLogger(__name__)
 

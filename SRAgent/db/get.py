@@ -460,11 +460,11 @@ def test_enhanced_workflow():
                 conn=conn, 
                 organisms=["human"],
                 search_term="cancer",
-                limit=10,
+                limit=50,
                 output_format="both",
-                include_sequencing_strategy=True,
-                include_cancer_status=True,
-                include_search_term=True
+                include_sequencing_strategy=False,
+                include_cancer_status=False,
+                include_search_term=False
             )
 
             if result["status"] == "success":
@@ -543,56 +543,56 @@ def test_basic_prefiltering():
         import traceback
         traceback.print_exc()
 
-# Example usage function
-def example_usage():
-    """
-    Show how to use the new prefiltering system
-    """
-    from dotenv import load_dotenv
-    load_dotenv()
+# # Example usage function
+# def example_usage():
+#     """
+#     Show how to use the new prefiltering system
+#     """
+#     from dotenv import load_dotenv
+#     load_dotenv()
     
-    try:
-        from connect import db_connect
-    except ImportError:
-        print("❌ Cannot import db_connect. Please check your setup.")
-        return
+#     try:
+#         from connect import db_connect
+#     except ImportError:
+#         print("❌ Cannot import db_connect. Please check your setup.")
+#         return
     
-    with db_connect() as conn:
-        print("=== Example Usage ===")
+#     with db_connect() as conn:
+#         print("=== Example Usage ===")
         
-        # Example 1: Basic functional prefiltering
-        print("\n--- Example 1: Basic Prefiltering ---")
-        result_df = get_prefiltered_datasets_functional(
-            conn=conn,
-            organisms=["human"],
-            search_term="cancer",
-            limit=20
-        )
-        print(f"Result: {len(result_df)} records")
+#         # Example 1: Basic functional prefiltering
+#         print("\n--- Example 1: Basic Prefiltering ---")
+#         result_df = get_prefiltered_datasets_functional(
+#             conn=conn,
+#             organisms=["human"],
+#             search_term="cancer",
+#             limit=20
+#         )
+#         print(f"Result: {len(result_df)} records")
         
-        # Example 2: Enhanced prefiltering with AI optimization
-        print("\n--- Example 2: Enhanced Prefiltering ---")
-        enhanced_result = get_enhanced_prefiltered_datasets(
-            conn=conn,
-            organisms=["human"],
-            search_term="brain",
-            limit=15,
-            output_format="both"
-        )
-        print(f"Enhanced Result Status: {enhanced_result['status']}")
+#         # Example 2: Enhanced prefiltering with AI optimization
+#         print("\n--- Example 2: Enhanced Prefiltering ---")
+#         enhanced_result = get_enhanced_prefiltered_datasets(
+#             conn=conn,
+#             organisms=["human"],
+#             search_term="brain",
+#             limit=15,
+#             output_format="both"
+#         )
+#         print(f"Enhanced Result Status: {enhanced_result['status']}")
         
-        # Example 3: Custom filter chain
-        print("\n--- Example 3: Custom Filter Chain ---")
-        custom_result = get_prefiltered_datasets_custom_chain(
-            conn=conn,
-            custom_filters=['initial', 'basic', 'organism', 'single_cell', 'limit'],
-            filter_params={
-                'organisms': ['human'],
-                'min_sc_confidence': 3,
-                'limit': 10
-            }
-        )
-        print(f"Custom Chain Result: {len(custom_result)} records")
+#         # Example 3: Custom filter chain
+#         print("\n--- Example 3: Custom Filter Chain ---")
+#         custom_result = get_prefiltered_datasets_custom_chain(
+#             conn=conn,
+#             custom_filters=['initial', 'basic', 'organism', 'single_cell', 'limit'],
+#             filter_params={
+#                 'organisms': ['human'],
+#                 'min_sc_confidence': 3,
+#                 'limit': 10
+#             }
+#         )
+#         print(f"Custom Chain Result: {len(custom_result)} records")
 
 
 # main
@@ -606,8 +606,8 @@ if __name__ == "__main__":
     print("🧪 Running module tests...")
     print(f"📦 Available modules: {list(MODULES.keys())}")
 
-    # Test basic functionality first
-    test_basic_prefiltering()
+    # # Test basic functionality first
+    # test_basic_prefiltering()
     
     # Test enhanced functionality if modules are available
     if MODULES.get('enhanced_metadata') and MODULES.get('categorize'):

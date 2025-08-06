@@ -14,6 +14,9 @@ class EnhancedMetadataExtractor:
     """
     Enhanced hierarchical metadata extractor optimized for AI agent processing 
     Handles Study -> Experiment -> Run hierarchy with local PostgreSQl database
+    
+    Args:
+        conn: Database connection object
     """
     
     def __init__(self):
@@ -94,7 +97,12 @@ class EnhancedMetadataExtractor:
         }
 
     def _create_empty_result(self) -> Dict[str, Any]:
-        """Create empty result structure"""
+        """
+        Create empty result structure
+        
+        Returns:
+            Empty result dictionary with metadata
+        """
         return {
             "ai_processing_metadata": {
                 "extraction_timestamp": datetime.now().isoformat(),
@@ -124,7 +132,16 @@ class EnhancedMetadataExtractor:
         conn: connection, 
         records: List[Dict]
     ) -> Dict[str, Any]:
-        """Enhanced category processing with database lookups"""
+        """
+        Enhanced category processing with database lookups
+        
+        Args:
+            conn: Database connection
+            records: List of records to process
+            
+        Returns:
+            Processed category data with enhanced metadata
+        """
         
         # Group records by experiment
         experiments = defaultdict(list)
@@ -541,6 +558,13 @@ def enhance_existing_categorize_workflow(
 ) -> Dict[str, Any]:
     """
     Drop-in enhancement for existing categorize workflow
+
+    Args:
+        conn: Database connection object
+        categorized_data: Categorized dataset structure from existing workflow
+        
+    Returns:
+        Dictionary containing enhanced hierarchical metadata
     """
     try:
         extractor = EnhancedMetadataExtractor()
@@ -567,6 +591,14 @@ def create_ai_ready_export_enhanced(
 ) -> Dict[str, Any]:
     """
     Create enhanced AI-ready export with database integration
+
+    Args:
+        conn: Database connection object
+        categorized_data: Categorized dataset structure from existing workflow
+        output_path: Path to save the enhanced export
+        
+    Returns:
+        Dictionary containing export status and metadata
     """
     try:
         extractor = EnhancedMetadataExtractor()
