@@ -8,16 +8,16 @@ from datetime import datetime
 
 
 # Fix import path issues
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+project_root = os.path.dirname(parent_dir) # Make project_root a global variable
+
 def setup_imports():
     """Setup proper import paths for the module"""
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    parent_dir = os.path.dirname(current_dir)
-    project_root = os.path.dirname(parent_dir)
-    
     # Add paths to sys.path if not already present
-    for path in [current_dir, parent_dir, project_root]:
+    for path in [project_root, parent_dir, current_dir]: # Prioritize project_root
         if path not in sys.path:
-            sys.path.insert(0, path)
+            sys.path.append(path)
 
 # Setup imports first
 setup_imports()
@@ -27,6 +27,15 @@ def import_required_modules():
     """Import required modules with fallback strategies"""
     modules = {}
     
+    # Try importing prefilter_functions module
+    try:
+        from prefilter_functions import get_prefiltered_datasets_functional
+        modules['prefilter_functions'] = {'get_prefiltered_datasets_functional': get_prefiltered_datasets_functional}
+    except ImportError as e:
+        print(f"❌ Cannot import prefilter_functions module: {e}")
+        print("Please ensure prefilter_functions.py is in the same directory or in your Python path")
+        return None
+
     # Try importing prefilter module
     try:
         from prefilter import (
@@ -97,21 +106,35 @@ def import_required_modules():
             }
         except ImportError:
             print("⚠️ Warning: enhanced_metadata module not found")
-            modules['enhanced_metadata'] = None
+            modules['enhanced_metadata'] = {}
         
-        # Try to import categorize module
+        # Try to import categorization_logic module
         try:
-            from categorize import categorize_datasets_by_project
+            from categorization_logic import categorize_datasets_by_project
+
             modules['categorize'] = {'categorize_datasets_by_project': categorize_datasets_by_project}
         except ImportError:
-            print("⚠️ Warning: categorize module not found")
-            modules['categorize'] = None
+            print("⚠️ Warning: categorization_logic module not found")
+            modules['categorize'] = {}
+
+        # Try to import enhanced_workflow module
+        try:
+            print("DEBUG: Attempting to import create_enhanced_ai_workflow...")
+            from SRAgent.db.export import create_enhanced_ai_workflow
+            modules['enhanced_workflow'] = {'create_enhanced_ai_workflow': create_enhanced_ai_workflow}
+            print("DEBUG: create_enhanced_ai_workflow imported successfully into MODULES.")
+        except ImportError as e:
+            print(f"⚠️ Warning: enhanced_workflow module not found: {e}")
+            modules['enhanced_workflow'] = {}
             
     except Exception as e:
         print(f"⚠️ Warning: Could not import export modules: {e}")
-        modules['enhanced_metadata'] = None
-        modules['categorize'] = None
+        modules['enhanced_metadata'] = {}
+        modules['categorize'] = {}
     
+    print("DEBUG: sys.path:")
+    for p in sys.path:
+        print(f"  - {p}")
     return modules
 
 # Import modules
@@ -123,96 +146,93 @@ if MODULES is None:
 logger = logging.getLogger(__name__)
 
 
-# Prefilter function, using independent filter module
-def get_prefiltered_datasets_functional(
-    conn: connection,
-    organisms: List[str] = ["human"],
-    search_term: Optional[str] = None,
-    limit: int = 20000000,
-    min_sc_confidence: int = 2,
-    create_temp_table: bool = False,
-    temp_table_name: str = "temp_prefiltered_results",
-    include_sequencing_strategy: bool = False,
-    include_cancer_status: bool = False,
-    include_search_term: bool = False
-) -> pd.DataFrame:
-    """
-    Prefilter datasets using a functional prefiltering approach, where each filter
-    accepts an object and returns a new filtered object.
-    
-    Args:
-        conn: Database connection
-        organisms: List of organisms, default ["human"]
-        search_term: Search keyword
-        limit: Limit on the number of records returned
-        min_sc_confidence: Minimum single-cell confidence score
-        create_temp_table: Whether to create a temporary table
-        temp_table_name: Name of the temporary table
-        include_sequencing_strategy: Whether to include sequencing strategy filter
-        include_cancer_status: Whether to include cancer status filter
-        include_search_term: Whether to include keyword search filter
-    
-    Returns:
-        Prefiltered DataFrame
-    """
-    try:
-        # Check if prefilter module is available  
-        if not MODULES.get('prefilter'):
-            logger.error("prefilter module not available")
-            return pd.DataFrame()
 
-        # Create filter chain
-        filter_chain = MODULES['prefilter']['create_filter_chain'](
-            conn=conn,
-            organisms=organisms,
-            search_term=search_term,
-            limit=limit,
-            min_sc_confidence=min_sc_confidence,
-            include_sequencing_strategy=include_sequencing_strategy,
-            include_cancer_status=include_cancer_status,
-            include_search_term=include_search_term
-        )
-        
-        # Apply filter chain
-        final_result = MODULES['prefilter']['apply_filter_chain'](filter_chain)
-        
-        # If needed, create temporary table
-        if create_temp_table and not final_result.data.empty:
-            create_temporary_table(conn, final_result.data, temp_table_name)
-        
-        return final_result.data
-        
-    except Exception as e:
-        logger.error(f"Prefiltering failed: {e}")
-        return pd.DataFrame()
 
-def get_enhanced_prefiltered_datasets(
-    conn: connection,
+
+
+def run_enhanced_workflow(
+    db_path: str = 'SRAgent.db',
+    output_dir: str = 'enhanced_workflow_output',
+    enable_categorization: bool = True,
     organisms: List[str] = ['human'],
-    search_term: Optional[str] = None, 
-    limit: int = 20000000,
-    min_sc_confidence: int = 2,
-    output_format: str = "ai_optimized",  # "ai_optimized", "standard", "both"
-    include_sequencing_strategy: bool = False,
-    include_cancer_status: bool = False,
-    include_search_term: bool = False
+    search_term: Optional[str] = None,
+    limit: int = 10,
+    min_sc_confidence: int = 2
 ) -> Dict[str, Any]:
-    """Enhanced version of prefiltering with AI-optimized output
-    
-    Args:
-        conn: Database connection
-        organisms: List of organisms, default ['human']
-        search_term: Search keyword
-        limit: Limit on the number of records returned
-        min_sc_confidence: Minimum single-cell confidence score
-        output_format: Output format ("ai_optimized", "standard", "both")
-        include_sequencing_strategy: Whether to include sequencing strategy filter
-        include_cancer_status: Whether to include cancer status filter
-        include_search_term: Whether to include keyword search filter
-    
-    Returns:
-        Dictionary with prefiltered data in requested format
     """
+    Runs the enhanced AI workflow directly from get.py.
+
+    Args:
+        db_path: Path to the SQLite database.
+        output_dir: Directory to save the output files.
+        enable_categorization: Whether to enable categorization.
+        organisms: List[str] = ['human'],
+        search_term: Search term to filter datasets.
+        limit: Maximum number of records to process.
+        min_sc_confidence: Minimum single-cell confidence score.
+
+    Returns:
+        A dictionary containing the workflow execution status and results.
+    """
+    logger.info("Running enhanced AI workflow directly from get.py...")
+
+    # Import db_connect with proper error handling
+    db_connect = None
+    try:
+        from SRAgent.db.connect import db_connect
+    except ImportError:
+        try:
+            # Try alternative import path if direct import fails
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            connect_path = os.path.join(current_dir, 'connect.py')
+            if os.path.exists(connect_path):
+                import importlib.util
+                spec = importlib.util.spec_from_file_location("connect", connect_path)
+                connect_module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(connect_module)
+                db_connect = connect_module.db_connect
+            else:
+                print("❌ Cannot import db_connect. Please check your setup.")
+                return {"status": "error", "message": "Database connection module not found"}
+        except Exception as e:
+            print(f"❌ Cannot import db_connect: {e}")
+            return {"status": "error", "message": f"Database connection module import failed: {e}"}
+
+    if db_connect is None:
+        return {"status": "error", "message": "Database connection function not available"}
+
+    if 'get_prefiltered_datasets_functional' not in MODULES.get('prefilter_functions', {}):
+        logger.error("get_prefiltered_datasets_functional not available. Please check imports.")
+        return {"status": "error", "message": "Workflow function not found"}
+
+    try:
+        with db_connect() as conn:
+            result = MODULES['prefilter_functions']['get_prefiltered_datasets_functional'](
+                conn=conn,
+                organisms=organisms,
+                search_term=search_term,
+                limit=limit,
+                min_sc_confidence=min_sc_confidence,
+                modules=MODULES # Pass the MODULES dictionary
+            )
+        logger.info(f"Workflow execution complete.")
+        # Assuming result is a DataFrame from get_prefiltered_datasets_functional
+        # Convert it to a dictionary format expected by the test workflow
+        return {
+            "status": "success" if not result.empty else "no_data",
+            "output_directory": None, # This function doesn't create files directly
+            "total_records": len(result) if not result.empty else 0,
+            "total_experiments": len(result['experiment_id'].unique()) if 'experiment_id' in result.columns and not result.empty else 0,
+            "categories": None, # This function doesn't categorize directly
+            "files_created": [] # This function doesn't create files directly
+        }
+    except Exception as e:
+        logger.error(f"Error running enhanced workflow: {e}")
+        return {"status": "error", "message": str(e)}
+
+
+    
+
     try:
         # Use exisiting prefilter function 
         result_df = get_prefiltered_datasets_functional(
@@ -497,51 +517,52 @@ def test_enhanced_workflow():
         import traceback
         traceback.print_exc()
 
-def test_basic_prefiltering():
-    """
-    Test basic prefiltering functionality
-    """
-    try:
-        # Import db_connect with proper error handling
-        try:
-            from connect import db_connect
-        except ImportError:
-            try:
-                current_dir = os.path.dirname(os.path.abspath(__file__))
-                project_root = os.path.dirname(os.path.dirname(current_dir))
-                sys.path.insert(0, os.path.join(project_root, 'SRAgent', 'db'))
-                from connect import db_connect
-            except ImportError:
-                print("❌ Cannot import db_connect. Please check your setup.")
-                return
+# def test_basic_prefiltering():
+#     """
+#     Test basic prefiltering functionality
+#     """
+#     try:
+#         # Import db_connect with proper error handling
+#         try:
+#             from connect import db_connect
+#         except ImportError:
+#             try:
+#                 current_dir = os.path.dirname(os.path.abspath(__file__))
+#                 project_root = os.path.dirname(os.path.dirname(current_dir))
+#                 sys.path.insert(0, os.path.join(project_root, 'SRAgent', 'db'))
+#                 from connect import db_connect
+#             except ImportError:
+#                 print("❌ Cannot import db_connect. Please check your setup.")
+#                 return
         
-        with db_connect() as conn:
-            print("=== Testing Basic Prefiltering ===")
+#         with db_connect() as conn:
+#             print("=== Testing Basic Prefiltering ===")
             
-            result_df = get_prefiltered_datasets_functional(
-                conn=conn,
-                organisms=["human"],
-                search_term="cancer",
-                limit=10
-            )
+#             result_df = get_prefiltered_datasets_functional(
+#                 conn=conn,
+#                 organisms=["human"],
+#                 search_term="cancer",
+#                 limit=10,
+#                 modules=MODULES
+#             )
             
-            if not result_df.empty:
-                print(f"✅ Basic prefiltering successful: {len(result_df)} records")
+#             if not result_df.empty:
+#                 print(f"✅ Basic prefiltering successful: {len(result_df)} records")
                 
-                # Show some column info
-                print("📊 Columns in result:")
-                for i, col in enumerate(result_df.columns[:10], 1):  # Show first 10 columns
-                    print(f"  {i:2d}. {col}")
-                if len(result_df.columns) > 10:
-                    print(f"     ... and {len(result_df.columns) - 10} more columns")
+#                 # Show some column info
+#                 print("📊 Columns in result:")
+#                 for i, col in enumerate(result_df.columns[:10], 1):  # Show first 10 columns
+#                     print(f"  {i:2d}. {col}")
+#                 if len(result_df.columns) > 10:
+#                     print(f"     ... and {len(result_df.columns) - 10} more columns")
                     
-            else:
-                print("❌ Basic prefiltering returned no results")
+#             else:
+#                 print("❌ Basic prefiltering returned no results")
                 
-    except Exception as e:
-        print(f"❌ Basic prefiltering test failed: {e}")
-        import traceback
-        traceback.print_exc()
+#     except Exception as e:
+#         print(f"❌ Basic prefiltering test failed: {e}")
+#         import traceback
+#         traceback.print_exc()
 
 # # Example usage function
 # def example_usage():
@@ -566,7 +587,8 @@ def test_basic_prefiltering():
 #             conn=conn,
 #             organisms=["human"],
 #             search_term="cancer",
-#             limit=20
+#             limit=20,
+#             modules=MODULES
 #         )
 #         print(f"Result: {len(result_df)} records")
         

@@ -4,10 +4,11 @@ import pandas as pd
 from datetime import datetime
 from pathlib import Path
 import logging
+import json
 from psycopg2.extensions import connection
 
 from ..get import get_prefiltered_datasets_functional
-from ..categorize import categorize_datasets_by_project, group_datasets_by_project_id
+from SRAgent.db.categorization_logic import categorize_datasets_by_project, group_datasets_by_project_id
 
 logger = logging.getLogger(__name__)
 

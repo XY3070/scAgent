@@ -8,7 +8,7 @@ import logging
 from psycopg2.extensions import connection
 
 from ..get import get_prefiltered_datasets_functional
-from ..categorize import categorize_datasets_by_project
+from SRAgent.db.categorization_logic import categorize_datasets_by_project
 
 logger = logging.getLogger(__name__)
 
