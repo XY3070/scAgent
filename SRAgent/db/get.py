@@ -8,43 +8,31 @@ from datetime import datetime
 
 
 # Fix import path issues
-current_dir = os.path.dirname(os.path.abspath(__file__))
-parent_dir = os.path.dirname(current_dir)
-project_root = os.path.dirname(parent_dir) # Make project_root a global variable
+import os
+import sys
 
-def setup_imports():
-    """
-    Setup proper import paths for the module.
-    This function should be called before any other imports in this module.
-    """
-    # Add paths to sys.path if not already present
-    for path in [project_root, parent_dir, current_dir]: # Prioritize project_root
-        if path not in sys.path:
-            sys.path.append(path)
-
-# Setup imports first
-setup_imports()
+# Add the parent directory of SRAgent to sys.path to ensure imports work correctly
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
 # Now import modules with proper error handling
 def import_required_modules():
     """
     Import required modules with fallback strategies.
-    This function should be called after setup_imports().
     """
     modules = {}
     
     # Try importing prefilter_functions module
     try:
-        from prefilter_functions import get_prefiltered_datasets_functional
+        from SRAgent.db.prefilter_functions import get_prefiltered_datasets_functional
         modules['prefilter_functions'] = {'get_prefiltered_datasets_functional': get_prefiltered_datasets_functional}
     except ImportError as e:
         print(f"❌ Cannot import prefilter_functions module: {e}")
-        print("Please ensure prefilter_functions.py is in the same directory or in your Python path")
+        print("Please ensure SRAgent/db/prefilter_functions.py is in your Python path or accessible.")
         return None
 
     # Try importing prefilter module
     try:
-        from prefilter import (
+        from SRAgent.db.prefilter import (
             FilterResult, 
             create_filter_chain, 
             apply_filter_chain,
@@ -76,36 +64,23 @@ def import_required_modules():
         }
     except ImportError as e:
         print(f"❌ Cannot import prefilter module: {e}")
-        print("Please ensure prefilter.py is in the same directory or in your Python path")
+        print("Please ensure SRAgent/db/prefilter.py is in your Python path or accessible.")
         return None
     
     # Try importing utils
     try:
-        from utils import execute_query
+        from SRAgent.db.utils import execute_query
         modules['utils'] = {'execute_query': execute_query}
-    except ImportError:
-        try:
-            # Try alternative import path
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            utils_path = os.path.join(current_dir, 'utils.py')
-            if os.path.exists(utils_path):
-                import importlib.util
-                spec = importlib.util.spec_from_file_location("utils", utils_path)
-                utils_module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(utils_module)
-                modules['utils'] = {'execute_query': utils_module.execute_query}
-            else:
-                print("⚠️ Warning: utils module not found, some functionality may be limited")
-                modules['utils'] = None
-        except Exception as e:
-            print(f"⚠️ Warning: Could not import utils: {e}")
-            modules['utils'] = None
+    except ImportError as e:
+        print(f"❌ Cannot import utils module: {e}")
+        print("Please ensure SRAgent/db/utils.py is in your Python path or accessible.")
+        return None
     
     # Try importing export modules
     try:
         # Try to import enhanced_metadata
         try:
-            from enhanced_metadata import EnhancedMetadataExtractor, enhance_existing_categorize_workflow
+            from SRAgent.db.enhanced_metadata import EnhancedMetadataExtractor, enhance_existing_categorize_workflow
             modules['enhanced_metadata'] = {
                 'EnhancedMetadataExtractor': EnhancedMetadataExtractor,
                 'enhance_existing_categorize_workflow': enhance_existing_categorize_workflow
@@ -116,7 +91,7 @@ def import_required_modules():
         
         # Try to import categorization_logic module
         try:
-            from categorization_logic import categorize_datasets_by_project
+            from SRAgent.db.categorization_logic import categorize_datasets_by_project
 
             modules['categorize'] = {'categorize_datasets_by_project': categorize_datasets_by_project}
         except ImportError:
@@ -125,12 +100,8 @@ def import_required_modules():
 
         # Try to import enhanced_workflow module
         try:
-            # print("DEBUG: Attempting to import create_enhanced_ai_workflow...")
-            # from SRAgent.db.export import create_enhanced_ai_workflow
-            # modules['enhanced_workflow'] = {'create_enhanced_ai_workflow': create_enhanced_ai_workflow}
-            # print("DEBUG: create_enhanced_ai_workflow imported successfully into MODULES.")
-            # Delay import of create_enhanced_ai_workflow until it's actually needed    
-            modules['enhanced_workflow'] = {}
+            from SRAgent.db.export.json_export import export_ai_data_to_json as create_enhanced_ai_workflow
+            modules['enhanced_workflow'] = {'create_enhanced_ai_workflow': create_enhanced_ai_workflow}
         except ImportError as e:
             print(f"⚠️ Warning: enhanced_workflow module not found: {e}")
             modules['enhanced_workflow'] = {}
@@ -139,38 +110,35 @@ def import_required_modules():
         print(f"⚠️ Warning: Could not import export modules: {e}")
         modules['enhanced_metadata'] = {}
         modules['categorize'] = {}
-    
+        modules['enhanced_workflow'] = {}
+
+    print(f"DEBUG: __name__: {__name__}")
+    print(f"DEBUG: __package__: {__package__}")
     print("DEBUG: sys.path:")
     for p in sys.path:
         print(f"  - {p}")
     return modules
 
 # Import modules
-MODULES = import_required_modules()
-if MODULES is None:
-    print("❌ Critical modules missing. Exiting.")
-    sys.exit(1)
-
 logger = logging.getLogger(__name__)
 
-# Delay the import of enhanced-workflow, only loading when needed, to avoid circular dependency 
-if not MODULES['enhanced_workflow']:
-    try:
-        from SRAgent.db.export import create_enhanced_ai_workflow       # noqa: E402
-        MODULES['enhanced_workflow']['create_enhanced_ai_workflow'] = create_enhanced_ai_workflow
-    except ImportError:
-        pass
+MODULES = import_required_modules()
+if MODULES is None:
+    logger.critical("❌ Critical modules missing. Exiting.")
+    sys.exit(1)
+
+
 
 
 def run_enhanced_workflow(
     db_path: str = 'SRAgent.db',
-    output_dir: str = 'enhanced_workflow_output',
+    output_dir: str = '/ssd2/xuyuan/output',
     enable_categorization: bool = True,
     organisms: List[str] = ['human'],
     search_term: Optional[str] = None,
-    limit: int = 10,
+    limit: int = 2000,
     min_sc_confidence: int = 2,
-    export_json: bool = False
+    export_json: bool = True
 ) -> Dict[str, Any]:
     """
     Runs the enhanced AI workflow directly from get.py.
@@ -188,6 +156,8 @@ def run_enhanced_workflow(
         A dictionary containing the workflow execution status and results.
     """
     logger.info("Running enhanced AI workflow directly from get.py...")
+
+    files_created = [] # Initialize files_created list
 
     # Import db_connect with proper error handling
     db_connect = None
@@ -255,12 +225,15 @@ def run_enhanced_workflow(
         # Convert it to a dictionary format expected by the test workflow
         return {
             "status": "success" if not result.empty else "no_data",
-            "output_directory": None, # This function doesn't create files directly
+            "output_directory": output_dir if files_created else None, # Reflect actual output directory if files were created
             "total_records": len(result) if not result.empty else 0,
             "total_experiments": len(result['experiment_id'].unique()) if 'experiment_id' in result.columns and not result.empty else 0,
             "categories": ai_data.get("category_summary") if ai_data else None, 
             "ai_data": ai_data, 
-            "files_created": [] 
+            "files_created": files_created, # Return the list of created files
+            "export_json_enabled": export_json,
+            "enhanced_workflow_module_available": bool(MODULES.get('enhanced_workflow')),
+            "create_enhanced_ai_workflow_function_available": 'create_enhanced_ai_workflow' in MODULES.get('enhanced_workflow', {})
         }
     except Exception as e:
         logger.error(f"Error running enhanced workflow: {e}")
@@ -446,8 +419,13 @@ def test_enhanced_workflow():
         result = run_enhanced_workflow(
             organisms=["human"],
             search_term="cancer",
-            limit=50
+            limit=2000,
+            export_json=True # Explicitly enable JSON export for testing
         )
+
+        print(f"Export JSON enabled: {result.get('export_json_enabled')}")
+        print(f"Enhanced workflow module available: {result.get('enhanced_workflow_module_available')}")
+        print(f"Create enhanced AI workflow function available: {result.get('create_enhanced_ai_workflow_function_available')}")
 
         if result["status"] == "success":
             print(f"✅ Enhanced workflow successful!")
