@@ -7,10 +7,10 @@ from typing import Dict, List, Any
 from datetime import datetime
 
 # Import existing modules
-from ..get import get_prefiltered_datasets_functional
+from SRAgent.db.prefilter_functions import get_prefiltered_datasets_functional
 from SRAgent.db.categorization_logic import categorize_datasets_by_project
-from ..enhanced_metadata import EnhancedMetadataExtractor, LocalPostgreSQLAdapter
-from ..connect import db_connect
+from SRAgent.db.enhanced_metadata import EnhancedMetadataExtractor, LocalPostgreSQLAdapter
+from SRAgent.db.connect import db_connect
 
 def create_enhanced_ai_workflow(
     conn,

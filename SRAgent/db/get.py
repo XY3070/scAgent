@@ -4,7 +4,7 @@ from typing import List, Dict, Any, Optional
 import pandas as pd
 from psycopg2.extensions import connection
 import logging
-from datetime import datetime  
+from datetime import datetime
 
 
 # Fix import path issues
@@ -119,10 +119,12 @@ def import_required_modules():
 
         # Try to import enhanced_workflow module
         try:
-            print("DEBUG: Attempting to import create_enhanced_ai_workflow...")
-            from SRAgent.db.export import create_enhanced_ai_workflow
-            modules['enhanced_workflow'] = {'create_enhanced_ai_workflow': create_enhanced_ai_workflow}
-            print("DEBUG: create_enhanced_ai_workflow imported successfully into MODULES.")
+            # print("DEBUG: Attempting to import create_enhanced_ai_workflow...")
+            # from SRAgent.db.export import create_enhanced_ai_workflow
+            # modules['enhanced_workflow'] = {'create_enhanced_ai_workflow': create_enhanced_ai_workflow}
+            # print("DEBUG: create_enhanced_ai_workflow imported successfully into MODULES.")
+            # Delay import of create_enhanced_ai_workflow until it's actually needed    
+            modules['enhanced_workflow'] = {}
         except ImportError as e:
             print(f"⚠️ Warning: enhanced_workflow module not found: {e}")
             modules['enhanced_workflow'] = {}
@@ -145,10 +147,13 @@ if MODULES is None:
 
 logger = logging.getLogger(__name__)
 
-
-
-
-
+# Delay the import of enhanced-workflow, only loading when needed, to avoid circular dependency 
+if not MODULES['enhanced_workflow']:
+    try:
+        from SRAgent.db.export import create_enhanced_ai_workflow       # noqa: E402
+        MODULES['enhanced_workflow']['create_enhanced_ai_workflow'] = create_enhanced_ai_workflow
+    except ImportError:
+        pass
 
 def run_enhanced_workflow(
     db_path: str = 'SRAgent.db',
@@ -216,6 +221,17 @@ def run_enhanced_workflow(
                 modules=MODULES # Pass the MODULES dictionary
             )
         logger.info(f"Workflow execution complete.")
+
+        # for ai enhancement  
+        ai_data = {}
+        if enable_categorization and MODULES.get("categorize"):
+            categorized = MODULES["categorize"]["categorize_datasets_by_project"](result)
+
+            if MODULES.get("enhanced_metadata"):
+                extractor_cls = MODULES["enhanced_metadata"]["EnhancedMetadataExtractor"]
+                extractor = extractor_cls()
+                ai_data = extractor.extract_hierarchical_metadata_from_db(conn, categorized)
+
         # Assuming result is a DataFrame from get_prefiltered_datasets_functional
         # Convert it to a dictionary format expected by the test workflow
         return {
@@ -223,57 +239,12 @@ def run_enhanced_workflow(
             "output_directory": None, # This function doesn't create files directly
             "total_records": len(result) if not result.empty else 0,
             "total_experiments": len(result['experiment_id'].unique()) if 'experiment_id' in result.columns and not result.empty else 0,
-            "categories": None, # This function doesn't categorize directly
-            "files_created": [] # This function doesn't create files directly
+            "categories": ai_data.get("category_summary") if ai_data else None, 
+            "ai_data": ai_data, 
+            "files_created": [] 
         }
     except Exception as e:
         logger.error(f"Error running enhanced workflow: {e}")
-        return {"status": "error", "message": str(e)}
-
-
-    
-
-    try:
-        # Use exisiting prefilter function 
-        result_df = get_prefiltered_datasets_functional(
-            conn= conn, 
-            organisms=organisms,
-            search_term=search_term,
-            limit=limit,
-            min_sc_confidence=min_sc_confidence,
-            include_sequencing_strategy=include_sequencing_strategy,
-            include_cancer_status=include_cancer_status,
-            include_search_term=include_search_term
-        )
-
-        if result_df.empty:
-            return {"status": "no_data", "data": pd.DataFrame(), "ai_data": {}}
-
-        # Apply categorization and enhancement
-        ai_data = {}
-        
-        # Check if categorize module is available
-        if MODULES.get('categorize'):
-            categorized = MODULES['categorize']['categorize_datasets_by_project'](result_df)
-            
-            # Check if enhanced_metadata module is available
-            if MODULES.get('enhanced_metadata') and output_format in ["ai_optimized", "both"]:
-                extractor = MODULES['enhanced_metadata']['EnhancedMetadataExtractor']()
-                ai_data = extractor.extract_hierarchical_metadata_from_db(conn, categorized)
-        else:
-            logger.warning("Categorize module not available, returning standard data only")
-        
-        if output_format == "ai_optimized":
-            return {"status": "success", "ai_data": ai_data}
-        elif output_format == "both":
-            return {"status": "success", "data": result_df, "ai_data": ai_data}
-        else:
-            return {"status": "success", "data": result_df}
-            
-    except Exception as e:
-        logger.error(f"Enhanced prefiltering failed: {e}")
-        import traceback
-        traceback.print_exc()
         return {"status": "error", "message": str(e)}
 
 def get_prefiltered_datasets_custom_chain(
@@ -472,153 +443,49 @@ def test_enhanced_workflow():
                 print("❌ Cannot import db_connect. Please check your setup.")
                 return
         
-        with db_connect() as conn: 
-            print("=== Testing Enhanced Workflow ===")
+        print("=== Testing Enhanced Workflow ===")
 
-            # Test with small dataset  
-            result = get_enhanced_prefiltered_datasets(
-                conn=conn, 
-                organisms=["human"],
-                search_term="cancer",
-                limit=50,
-                output_format="both",
-                include_sequencing_strategy=False,
-                include_cancer_status=False,
-                include_search_term=False
-            )
+        # Test with small dataset  
+        result = run_enhanced_workflow(
+            organisms=["human"],
+            search_term="cancer",
+            limit=50
+        )
 
-            if result["status"] == "success":
-                print(f"✅ Enhanced workflow successful!")
-                if "data" in result:
-                    print(f"📊 Standard data: {len(result['data'])} records")
-                if "ai_data" in result and result['ai_data']:
-                    hierarchical_data = result['ai_data'].get('hierarchical_data', {})
-                    if hierarchical_data:
-                        total_experiments = sum(
-                            data.get('category_summary', {}).get('total_experiments', 0) 
-                            for data in hierarchical_data.values()
-                        )
-                        print(f"🤖 AI-optimized data: {total_experiments} experiments")
+        if result["status"] == "success":
+            print(f"✅ Enhanced workflow successful!")
+            if "data" in result:
+                print(f"📊 Standard data: {len(result['data'])} records")
+            if "ai_data" in result and result['ai_data']:
+                hierarchical_data = result['ai_data'].get('hierarchical_data', {})
+                if hierarchical_data:
+                    total_experiments = sum(
+                        data.get('category_summary', {}).get('total_experiments', 0) 
+                        for data in hierarchical_data.values()
+                    )
+                    print(f"🤖 AI-optimized data: {total_experiments} experiments")
                         
-                        # Show structure
-                        for category, data in hierarchical_data.items():
-                            if data.get('experiments'):
-                                exp_count = len(data['experiments'])
-                                print(f"  - {category}: {exp_count} experiments")
-                    else:
-                        print("🤖 AI-optimized data: No hierarchical data generated")
+                    # Show structure
+                    for category, data in hierarchical_data.items():
+                        if data.get('experiments'):
+                            exp_count = len(data['experiments'])
+                            print(f"  - {category}: {exp_count} experiments")
                 else:
-                    print("🤖 AI-optimized data: Not available (missing modules)")
+                    print("🤖 AI-optimized data: No hierarchical data generated")
             else:
-                print(f"❌ Enhanced workflow failed: {result.get('message')}")
+                print("🤖 AI-optimized data: Not available (missing modules)")
+        else:
+            print(f"❌ Enhanced workflow failed: {result.get('message')}")
                     
     except Exception as e:
         print(f"❌ Test failed: {e}")
         import traceback
         traceback.print_exc()
 
-# def test_basic_prefiltering():
-#     """
-#     Test basic prefiltering functionality
-#     """
-#     try:
-#         # Import db_connect with proper error handling
-#         try:
-#             from connect import db_connect
-#         except ImportError:
-#             try:
-#                 current_dir = os.path.dirname(os.path.abspath(__file__))
-#                 project_root = os.path.dirname(os.path.dirname(current_dir))
-#                 sys.path.insert(0, os.path.join(project_root, 'SRAgent', 'db'))
-#                 from connect import db_connect
-#             except ImportError:
-#                 print("❌ Cannot import db_connect. Please check your setup.")
-#                 return
-        
-#         with db_connect() as conn:
-#             print("=== Testing Basic Prefiltering ===")
-            
-#             result_df = get_prefiltered_datasets_functional(
-#                 conn=conn,
-#                 organisms=["human"],
-#                 search_term="cancer",
-#                 limit=10,
-#                 modules=MODULES
-#             )
-            
-#             if not result_df.empty:
-#                 print(f"✅ Basic prefiltering successful: {len(result_df)} records")
-                
-#                 # Show some column info
-#                 print("📊 Columns in result:")
-#                 for i, col in enumerate(result_df.columns[:10], 1):  # Show first 10 columns
-#                     print(f"  {i:2d}. {col}")
-#                 if len(result_df.columns) > 10:
-#                     print(f"     ... and {len(result_df.columns) - 10} more columns")
-                    
-#             else:
-#                 print("❌ Basic prefiltering returned no results")
-                
-#     except Exception as e:
-#         print(f"❌ Basic prefiltering test failed: {e}")
-#         import traceback
-#         traceback.print_exc()
-
-# # Example usage function
-# def example_usage():
-#     """
-#     Show how to use the new prefiltering system
-#     """
-#     from dotenv import load_dotenv
-#     load_dotenv()
-    
-#     try:
-#         from connect import db_connect
-#     except ImportError:
-#         print("❌ Cannot import db_connect. Please check your setup.")
-#         return
-    
-#     with db_connect() as conn:
-#         print("=== Example Usage ===")
-        
-#         # Example 1: Basic functional prefiltering
-#         print("\n--- Example 1: Basic Prefiltering ---")
-#         result_df = get_prefiltered_datasets_functional(
-#             conn=conn,
-#             organisms=["human"],
-#             search_term="cancer",
-#             limit=20,
-#             modules=MODULES
-#         )
-#         print(f"Result: {len(result_df)} records")
-        
-#         # Example 2: Enhanced prefiltering with AI optimization
-#         print("\n--- Example 2: Enhanced Prefiltering ---")
-#         enhanced_result = get_enhanced_prefiltered_datasets(
-#             conn=conn,
-#             organisms=["human"],
-#             search_term="brain",
-#             limit=15,
-#             output_format="both"
-#         )
-#         print(f"Enhanced Result Status: {enhanced_result['status']}")
-        
-#         # Example 3: Custom filter chain
-#         print("\n--- Example 3: Custom Filter Chain ---")
-#         custom_result = get_prefiltered_datasets_custom_chain(
-#             conn=conn,
-#             custom_filters=['initial', 'basic', 'organism', 'single_cell', 'limit'],
-#             filter_params={
-#                 'organisms': ['human'],
-#                 'min_sc_confidence': 3,
-#                 'limit': 10
-#             }
-#         )
-#         print(f"Custom Chain Result: {len(custom_result)} records")
-
 
 # main
 if __name__ == "__main__":
+    get_enhanced_prefiltered_datasets = run_enhanced_workflow
     from dotenv import load_dotenv
     load_dotenv()
     
