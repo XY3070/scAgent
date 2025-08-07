@@ -13,7 +13,10 @@ parent_dir = os.path.dirname(current_dir)
 project_root = os.path.dirname(parent_dir) # Make project_root a global variable
 
 def setup_imports():
-    """Setup proper import paths for the module"""
+    """
+    Setup proper import paths for the module.
+    This function should be called before any other imports in this module.
+    """
     # Add paths to sys.path if not already present
     for path in [project_root, parent_dir, current_dir]: # Prioritize project_root
         if path not in sys.path:
@@ -24,7 +27,10 @@ setup_imports()
 
 # Now import modules with proper error handling
 def import_required_modules():
-    """Import required modules with fallback strategies"""
+    """
+    Import required modules with fallback strategies.
+    This function should be called after setup_imports().
+    """
     modules = {}
     
     # Try importing prefilter_functions module
@@ -155,6 +161,7 @@ if not MODULES['enhanced_workflow']:
     except ImportError:
         pass
 
+
 def run_enhanced_workflow(
     db_path: str = 'SRAgent.db',
     output_dir: str = 'enhanced_workflow_output',
@@ -162,7 +169,8 @@ def run_enhanced_workflow(
     organisms: List[str] = ['human'],
     search_term: Optional[str] = None,
     limit: int = 10,
-    min_sc_confidence: int = 2
+    min_sc_confidence: int = 2,
+    export_json: bool = False
 ) -> Dict[str, Any]:
     """
     Runs the enhanced AI workflow directly from get.py.
@@ -231,6 +239,17 @@ def run_enhanced_workflow(
                 extractor_cls = MODULES["enhanced_metadata"]["EnhancedMetadataExtractor"]
                 extractor = extractor_cls()
                 ai_data = extractor.extract_hierarchical_metadata_from_db(conn, categorized)
+                
+                if export_json and MODULES.get('enhanced_workflow') and 'create_enhanced_ai_workflow' in MODULES['enhanced_workflow']:
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    json_filename = f"ai_enhanced_data_{timestamp}.json"
+                    export_result = MODULES['enhanced_workflow']['create_enhanced_ai_workflow'](
+                        ai_data, 
+                        output_dir, 
+                        json_filename
+                    )
+                    if export_result["status"] == "success":
+                        files_created.append(export_result["output_path"])
 
         # Assuming result is a DataFrame from get_prefiltered_datasets_functional
         # Convert it to a dictionary format expected by the test workflow
@@ -246,6 +265,7 @@ def run_enhanced_workflow(
     except Exception as e:
         logger.error(f"Error running enhanced workflow: {e}")
         return {"status": "error", "message": str(e)}
+
 
 def get_prefiltered_datasets_custom_chain(
     conn: connection,
@@ -291,8 +311,8 @@ def get_prefiltered_datasets_custom_chain(
                 filter_obj = filter_class(conn, filter_params.get('organisms', ['human']))
             elif filter_name == 'single_cell':
                 filter_obj = filter_class(conn, filter_params.get('min_sc_confidence', 2))
-            elif filter_name == 'keyword':
-                filter_obj = filter_class(conn, filter_params.get('search_term'))
+            # elif filter_name == 'keyword':
+            #     filter_obj = filter_class(conn, filter_params.get('search_term'))
             elif filter_name == 'limit':
                 filter_obj = filter_class(conn, filter_params.get('limit', 20000000))
             else:
@@ -310,6 +330,7 @@ def get_prefiltered_datasets_custom_chain(
     except Exception as e:
         logger.error(f"Custom chain filtering failed: {e}")
         return pd.DataFrame()
+
 
 def create_temporary_table(conn: connection, df: pd.DataFrame, table_name: str):
     """
@@ -366,6 +387,7 @@ def create_temporary_table(conn: connection, df: pd.DataFrame, table_name: str):
         except:
             pass
 
+
 # Retain original function's compatibility version
 async def get_prefiltered_datasets_from_local_db(
     conn,
@@ -399,31 +421,6 @@ async def get_prefiltered_datasets_from_local_db(
         logger.error(f"Prefiltering error: {e}")
         return []
 
-def check_table_structure(conn):
-    """
-    Check the table structure and confirm which fields actually exist
-    """
-    try:
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT column_name 
-            FROM information_schema.columns 
-            WHERE table_schema = 'merged' AND table_name = 'sra_geo_ft'
-            ORDER BY column_name
-        """)
-        
-        columns = [row[0] for row in cursor.fetchall()]
-        cursor.close()
-        
-        print("📊 Actual fields existing in the database table:")
-        for i, col in enumerate(columns, 1):
-            print(f"  {i:2d}. {col}")
-        
-        return columns
-        
-    except Exception as e:
-        print(f"❌ Failed to check table structure: {e}")
-        return []
 
 def test_enhanced_workflow():
     """
@@ -509,3 +506,4 @@ if __name__ == "__main__":
             print("   - categorize module")
     
     print("\n🎯 Tests completed!")
+    

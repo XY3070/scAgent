@@ -113,3 +113,32 @@ def export_prefiltered_to_json(
     except Exception as e:
         logger.error(f"Failed to export to JSON: {e}")
         return {"status": "error", "message": str(e)}
+
+def export_ai_data_to_json(
+    ai_data: Dict[str, Any],
+    output_directory: str = "./output",
+    filename: str = "ai_enhanced_data.json"
+) -> Dict[str, Any]:
+    """
+    Export AI enhanced data to a JSON file.
+
+    Args:
+        ai_data: The dictionary containing AI enhanced data.
+        output_directory: The directory where the JSON file will be saved.
+        filename: The name of the JSON file.
+
+    Returns:
+        A dictionary indicating the status of the export operation.
+    """
+    try:
+        output_path = Path(output_directory) / filename
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with open(output_path, 'w', encoding='utf-8') as f:
+            json.dump(ai_data, f, indent=2, ensure_ascii=False, default=str)
+        
+        logger.info(f"Successfully exported AI enhanced data to {output_path}")
+        return {"status": "success", "output_path": str(output_path)}
+    except Exception as e:
+        logger.error(f"Failed to export AI enhanced data to JSON: {e}")
+        return {"status": "error", "message": str(e)}
