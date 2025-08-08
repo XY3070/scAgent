@@ -25,9 +25,7 @@ def run_test_workflow():
             results = run_enhanced_workflow(
                 organisms=["human"],
                 limit=10, # Limit to a small number for quick testing
-
-
-                min_sc_confidence=2
+                min_sc_confidence=1
             )
             
             print("Workflow execution complete.")

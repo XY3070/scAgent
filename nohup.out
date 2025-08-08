@@ -1,0 +1,58 @@
+✅ Successfully imported prefilter_functions
+✅ Successfully imported prefilter
+✅ Successfully imported utils
+✅ Successfully imported enhanced_metadata
+✅ Successfully imported categorization_logic
+✅ Successfully imported json_export from file path
+DEBUG: __name__: __main__
+DEBUG: __package__: None
+DEBUG: sys.path:
+  - /ssd2/xuyuan/SRAgent
+  - /ssd2/xuyuan/SRAgent/SRAgent/db
+  - /ssd2/xuyuan/.local/share/uv/python/cpython-3.12.11-linux-x86_64-gnu/lib/python312.zip
+  - /ssd2/xuyuan/.local/share/uv/python/cpython-3.12.11-linux-x86_64-gnu/lib/python3.12
+  - /ssd2/xuyuan/.local/share/uv/python/cpython-3.12.11-linux-x86_64-gnu/lib/python3.12/lib-dynload
+  - /ssd2/xuyuan/SRAgent/.venv/lib/python3.12/site-packages
+  - __editable__.sragent-0.4.0.finder.__path_hook__
+🚀 Running enhanced AI workflow...
+🔍 Starting Stepwise Prefiltering Process
+==================================================
+📊 Initial Dataset: 16,385,539 records (↓0, -0.0%)
+   All records in database
+
+📊 Basic Availability: 16,385,539 records (↓0, -0.0%)
+   Has SRA_ID or GSE_ID
+
+📊 Organism Filter: 1,298,704 records (↓15,086,835, -92.1%)
+   Human samples only
+
+📊 Single Cell Filter: 137,189 records (↓1,161,515, -89.4%)
+   sc_conf_score >= 1
+
+📊 Tissue Source: 82,328 records (↓54,861, -40.0%)
+   Primary tissue samples (not cell lines)
+
+📊 Limit Filter: 82,328 records (↓0, -0.0%)
+   Top 20000000 records by submission date
+
+==================================================
+📈 Final result: 82,328 records
+Traceback (most recent call last):
+  File "/ssd2/xuyuan/SRAgent/SRAgent/db/get.py", line 506, in <module>
+    result = run_enhanced_workflow(
+             ^^^^^^^^^^^^^^^^^^^^^^
+  File "/ssd2/xuyuan/SRAgent/SRAgent/db/get.py", line 275, in run_enhanced_workflow
+    ai_data = extractor.extract_hierarchical_metadata_from_db(conn, categorized)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/ssd2/xuyuan/SRAgent/SRAgent/db/enhanced_metadata.py", line 83, in extract_hierarchical_metadata_from_db
+    enhanced_data[category] = self._process_category_with_db_lookup(conn, records)
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/ssd2/xuyuan/SRAgent/SRAgent/db/enhanced_metadata.py", line 157, in _process_category_with_db_lookup
+    enhanced_metadata = self._fetch_enhanced_metadata(conn, all_sra_ids)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/ssd2/xuyuan/SRAgent/SRAgent/db/enhanced_metadata.py", line 266, in _fetch_enhanced_metadata
+    cursor.execute(query, clean_ids)
+  File "/ssd2/xuyuan/.local/share/uv/python/cpython-3.12.11-linux-x86_64-gnu/lib/python3.12/encodings/utf_8.py", line 15, in decode
+    def decode(input, errors='strict'):
+    
+KeyboardInterrupt

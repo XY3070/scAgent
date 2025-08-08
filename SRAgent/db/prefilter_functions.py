@@ -15,7 +15,7 @@ def get_prefiltered_datasets_functional(
     organisms: List[str] = ["human"],
     search_term: Optional[str] = None,
     limit: int = 20000000,
-    min_sc_confidence: int = 2,
+    min_sc_confidence: int = 1,
     create_temp_table: bool = False,
     temp_table_name: str = "temp_prefiltered_results",
     include_sequencing_strategy: bool = False,

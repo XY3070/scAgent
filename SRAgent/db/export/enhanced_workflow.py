@@ -20,7 +20,7 @@ def create_enhanced_ai_workflow(
     output_dir: str = "enhanced_export",
     output_formats: List[str] = ["json"],
     categorize: bool = True,
-    min_sc_confidence: int = 2,
+    min_sc_confidence: int = 1,
     include_sequencing_strategy: bool = False,
     include_cancer_status: bool = False,
     include_search_term: bool = False

@@ -19,7 +19,7 @@ def export_prefiltered_to_json(
     organisms: List[str] = ["human"],
     search_term: Optional[str] = None,
     limit: int = 100000,
-    min_sc_confidence: int = 2,
+    min_sc_confidence: int = 1,
     include_categorization: bool = True,
     include_grouping: bool = True,
     prefiltered_df: Optional[pd.DataFrame] = None  # Add this parameter to avoid circular import

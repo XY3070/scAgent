@@ -189,8 +189,8 @@ def run_enhanced_workflow(
     enable_categorization: bool = True,
     organisms: List[str] = ['human'],
     search_term: Optional[str] = None,
-    limit: int = 2000,
-    min_sc_confidence: int = 2,
+    limit: int = 20000000,
+    min_sc_confidence: int = 1,
     export_json: bool = True
 ) -> Dict[str, Any]:
     """
@@ -322,71 +322,6 @@ def run_enhanced_workflow(
         import traceback
         traceback.print_exc()
         return {"status": "error", "message": str(e)}
-
-
-def get_prefiltered_datasets_custom_chain(
-    conn: connection,
-    custom_filters: List[str],
-    filter_params: Dict[str, Any] = None
-) -> pd.DataFrame:
-    """
-    Prefilter datasets using a custom filter chain.
-    
-    Args:
-        conn: Database connection
-        custom_filters: List of custom filter names
-        filter_params: Dictionary of filter parameters
-    
-    Returns:
-        Prefiltered DataFrame
-    """
-    if filter_params is None:
-        filter_params = {}
-
-    if not MODULES.get('prefilter'):
-        logger.error("prefilter module not available")
-        return pd.DataFrame()
-    
-    # Map filter names to classes
-    filter_map = MODULES['prefilter']['filters']
-    
-    try:
-        # Build custom filter chain
-        filter_chain = []
-        result = None
-        
-        for filter_name in custom_filters:
-            filter_class_name = f"{filter_name.title()}Filter"
-            if filter_class_name not in filter_map:
-                logger.warning(f"Unknown filter: {filter_name}")
-                continue
-            
-            filter_class = filter_map[filter_class_name]
-            
-            # Create instance based on filter type
-            if filter_name == 'organism':
-                filter_obj = filter_class(conn, filter_params.get('organisms', ['human']))
-            elif filter_name == 'single_cell':
-                filter_obj = filter_class(conn, filter_params.get('min_sc_confidence', 2))
-            # elif filter_name == 'keyword':
-            #     filter_obj = filter_class(conn, filter_params.get('search_term'))
-            elif filter_name == 'limit':
-                filter_obj = filter_class(conn, filter_params.get('limit', 20000000))
-            else:
-                filter_obj = filter_class(conn)
-            
-            # Apply filter
-            result = filter_obj.apply(result)
-            
-            if result.count == 0:
-                logger.warning("No records remaining after filter: " + filter_name)
-                break
-        
-        return result.data if result else pd.DataFrame()
-        
-    except Exception as e:
-        logger.error(f"Custom chain filtering failed: {e}")
-        return pd.DataFrame()
 
 
 def create_temporary_table(conn: connection, df: pd.DataFrame, table_name: str):
@@ -566,20 +501,20 @@ if __name__ == "__main__":
     from dotenv import load_dotenv
     load_dotenv()
     
-    os.environ["DYNACONF"] = "test"  
+    # Run the enhanced workflow
+    print("🚀 Running enhanced AI workflow...")
+    result = run_enhanced_workflow(
+        organisms=["human"],
+        search_term=None, # Set to None for broader search or specific term
+        limit=20000000, # Set a large limit for actual workflow
+        min_sc_confidence=1, # Adjust as needed
+        export_json=True # Ensure JSON export is enabled
+    )
 
-    # Run tests
-    print("🧪 Running module tests...")
-    print(f"📦 Available modules: {list(MODULES.keys())}")
-
-    # Test enhanced functionality if modules are available
-    if MODULES.get('enhanced_metadata') and MODULES.get('categorize'):
-        test_enhanced_workflow()
+    print("\n✅ Workflow execution complete.")
+    print(f"Status: {result.get('status')}")
+    print(f"Total records processed: {result.get('total_records')}")
+    if result.get('files_created'):
+        print(f"Output files created: {result.get('files_created')}")
     else:
-        print("\n⚠️ Enhanced workflow skipped - missing required modules:")
-        if not MODULES.get('enhanced_metadata'):
-            print("   - enhanced_metadata module")
-        if not MODULES.get('categorize'):
-            print("   - categorize module")
-    
-    print("\n🎯 Tests completed!")
+        print("No output files created.")

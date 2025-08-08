@@ -19,7 +19,7 @@ def export_prefiltered_datasets_to_postgres(
     organisms: List[str] = ["human"],
     search_term: Optional[str] = None,
     limit: int = 1000,
-    min_sc_confidence: int = 2,
+    min_sc_confidence: int = 1,
     create_categorized_tables: bool = True
 ) -> Dict[str, Any]:
     """
@@ -181,7 +181,7 @@ def export_prefiltered_datasets_to_sqlite(
     organisms: List[str] = ["human"],
     search_term: Optional[str] = None,
     limit: int = 1000,
-    min_sc_confidence: int = 2,
+    min_sc_confidence: int = 1,
     create_categorized_tables: bool = True
 ) -> Dict[str, Any]:
     """
