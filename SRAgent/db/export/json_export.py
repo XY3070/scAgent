@@ -4,10 +4,10 @@ import pandas as pd
 from datetime import datetime
 from pathlib import Path
 import logging
-import json
 from psycopg2.extensions import connection
 
-from SRAgent.db.get import get_prefiltered_datasets_functional
+# Fix the circular import issue
+# from SRAgent.db.get import get_prefiltered_datasets_functional  # Remove this line
 from SRAgent.db.categorization_logic import categorize_datasets_by_project, group_datasets_by_project_id
 
 logger = logging.getLogger(__name__)
@@ -21,7 +21,8 @@ def export_prefiltered_to_json(
     limit: int = 100000,
     min_sc_confidence: int = 2,
     include_categorization: bool = True,
-    include_grouping: bool = True
+    include_grouping: bool = True,
+    prefiltered_df: Optional[pd.DataFrame] = None  # Add this parameter to avoid circular import
 ) -> Dict[str, Any]:
     """
     Export prefiltered datasets to JSON file with optional categorization and grouping
@@ -35,17 +36,23 @@ def export_prefiltered_to_json(
         min_sc_confidence: Minimum single-cell confidence score
         include_categorization: Whether to categorize by project type
         include_grouping: Whether to group by project ID
+        prefiltered_df: Pre-filtered DataFrame (to avoid circular import)
     """
     try:
-        # Get prefiltered datasets  
-        logger.info("Getting prefiltered datasets...")
-        df = get_prefiltered_datasets_functional(
-            conn=conn,
-            organisms=organisms,
-            search_term=search_term,
-            limit=limit,
-            min_sc_confidence=min_sc_confidence
-        )
+        # Get prefiltered datasets - either from parameter or import dynamically
+        if prefiltered_df is not None:
+            df = prefiltered_df
+        else:
+            # Dynamic import to avoid circular dependency
+            from SRAgent.db.get import get_prefiltered_datasets_functional
+            logger.info("Getting prefiltered datasets...")
+            df = get_prefiltered_datasets_functional(
+                conn=conn,
+                organisms=organisms,
+                search_term=search_term,
+                limit=limit,
+                min_sc_confidence=min_sc_confidence
+            )
 
         if df.empty:
             logger.warning("No records found with current filters")
@@ -134,8 +141,18 @@ def export_ai_data_to_json(
         output_path = Path(output_directory) / filename
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
+        # Add some metadata to the export
+        export_data = {
+            "export_metadata": {
+                "timestamp": datetime.now().isoformat(),
+                "export_type": "ai_enhanced_data",
+                "total_size": len(str(ai_data))
+            },
+            "ai_data": ai_data
+        }
+
         with open(output_path, 'w', encoding='utf-8') as f:
-            json.dump(ai_data, f, indent=2, ensure_ascii=False, default=str)
+            json.dump(export_data, f, indent=2, ensure_ascii=False, default=str)
         
         logger.info(f"Successfully exported AI enhanced data to {output_path}")
         return {"status": "success", "output_path": str(output_path)}
