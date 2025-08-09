@@ -1,6 +1,7 @@
 import json
 import os
 import asyncio
+import re
 from pathlib import Path
 from SRAgent.agents.utils import set_model, load_settings
 from dotenv import load_dotenv
@@ -9,10 +10,10 @@ load_dotenv()
 os.environ["DYNACONF_ENV"] = "claude"
 
 # ===== Config =====
-INPUT_FILE = "/ssd2/xuyuan/output/ai_enhanced_data_20250808_121341.json"
-OUTPUT_FILE = "/ssd2/xuyuan/output/output_single_cell.json"
-DISCARDED_LIST_FILE = "/ssd2/xuyuan/output/discarded_experiments.txt"
-BATCH_SIZE = 20
+INPUT_FILE = "/ssd2/xuyuan/output/ai_enhanced_data_20250808_232604.json"
+OUTPUT_FILE = "/ssd2/xuyuan/output/output_sc_final.json"
+DISCARDED_LIST_FILE = "/ssd2/xuyuan/output/discarded_sc_experiments_final.txt"
+BATCH_SIZE = 30
 RETRY_LIMIT = 2
 
 # ===== Init Model =====
@@ -64,12 +65,23 @@ async def classify_experiment(exp_id, exp_data):
         prompt = PROMPT_TEMPLATE.format(metadata=meta_str)
         try:
             resp = await model.ainvoke([{"role": "user", "content": prompt}])
-            result = json.loads(resp.content)  # Parse JSON content compulsorily 
+            # # DEBUG: print the thinking chain 
+            # print(f"[DEBUG] Thinking chain for {exp_id}: \n{resp.content}")
+
+            # Extract the JSON part from the response
+            json_str = extract_json_from_response(resp.content)  
+
+            # Parse JSON  
+            result = json.loads(json_str)  
+
+            # Assure the field is complete  
             if all(k in result for k in ("is_single_cell", "confidence", "reason")):
                 return exp_id, result
+
         except Exception as e:
-            print(f"[Retry {attempt+1}] {exp_id} parse error: {e}")
+            print(f"[Retry {attempt+1}] {exp_id} classify error: {e}")
             await asyncio.sleep(1)  # Wait and retry
+
     return exp_id, {"is_single_cell": False, "confidence": 0, "reason": "Model did not return valid JSON"}
 
 
@@ -83,6 +95,29 @@ async def process_batch(batch):
     """
     tasks = [classify_experiment(exp_id, exp_data) for exp_id, exp_data in batch]
     return await asyncio.gather(*tasks)
+
+
+def extract_json_from_response(text):
+    """
+    Extract JSON from the response of model:
+    1. Delete <think>...</think>  
+    2. Priorily take ```json...``` block  
+    3. Otherwise take the first {...} block
+    """
+    # 1. Delete <think>...</think>
+    cleaned = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+
+    # 2. Priorily take ```json...``` block
+    match = re.search(r"```json\s*(\{.*?\})\s*```", cleaned, flags=re.DOTALL)
+    if match:
+        return match.group(1)
+    
+    # 3. Otherwise take the first {...} block
+    match = re.search(r"\{.*\}", cleaned, flags=re.DOTALL)
+    if match:
+        return match.group(0)
+
+    raise ValueError("No JSON object found in model response")
 
 
 async def main():
