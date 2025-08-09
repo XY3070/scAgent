@@ -11,6 +11,7 @@ from langchain_anthropic import ChatAnthropic
 from dynaconf import Dynaconf
 
 import openai
+from SRAgent.config import settings as app_settings
 
 def load_settings() -> Dict[str, Any]:
     """
@@ -159,6 +160,7 @@ def set_model(
     agent_name: str = "default",
     max_tokens: Optional[int] = None,
     service_tier: Optional[str] = None,
+    settings: Optional[dict] = None,
 ) -> Any:
     """
     Create a model instance with settings from configuration
@@ -174,7 +176,7 @@ def set_model(
     """
     # Load settings
     settings = load_settings()
-    
+
     # Use provided params or get from settings
     if model_name is None:
         try:
@@ -200,8 +202,9 @@ def set_model(
             try:
                 reasoning_effort = settings["reasoning_effort"]["default"]
             except KeyError:
-                if temperature is None:
-                    raise ValueError(f"No reasoning effort or temperature was provided for agent '{agent_name}'")
+                raise ValueError(f"No reasoning_effort was provided for agent '{agent_name}'")
+
+    # Get max_tokens from settings if not provided
     if max_tokens is None:
         try:
             max_tokens = settings["max_tokens"][agent_name]
@@ -209,111 +212,100 @@ def set_model(
             try:
                 max_tokens = settings["max_tokens"]["default"]
             except KeyError:
-                pass # No max_tokens provided
+                max_tokens = 4096 # Default to 4096 if not specified
+
+    # Get service_tier from settings if not provided
     if service_tier is None:
-        try:
-            service_tier = settings["service_tier"][agent_name]
-        except (KeyError, TypeError):
+        if isinstance(settings.get("service_tier"), dict):
             try:
-                service_tier = settings["service_tier"]["default"]
-            except (KeyError, TypeError):
+                service_tier = settings["service_tier"][agent_name]
+            except KeyError:
                 try:
-                    service_tier = settings["service_tier"]
-                except (KeyError, TypeError):
-                    service_tier = "default"  # fallback to default service tier
-
-    # Get timeout from settings (optional)
-    timeout = None
-    try:
-        timeout = settings["flex_timeout"][agent_name]
-    except (KeyError, TypeError):
-        try:
-            timeout = settings["flex_timeout"]["default"]
-        except (KeyError, TypeError):
-            try:
-                timeout = settings["flex_timeout"]
-            except (KeyError, TypeError):
-                timeout = 180.0  # Default value
-
-    # Validate service_tier for OpenAI models
-    if service_tier == "flex" and not re.search(r"^o[0-9]", model_name):
-        raise ValueError(f"Service tier 'flex' only works with o3 and o4-mini models, not {model_name} (agent: {agent_name})")
-
-    # Check model provider and initialize appropriate model
-    if model_name.startswith("claude"): # e.g.,  "claude-3-7-sonnet-20250219"
-        if reasoning_effort == "low":
-            think_tokens = 1024
-        elif reasoning_effort == "medium":
-            think_tokens = 1024 * 2
-        elif reasoning_effort == "high":
-            think_tokens = 1024 * 4
+                    service_tier = settings["service_tier"]["default"]
+                except KeyError:
+                    service_tier = "default" # Default to default if not specified
         else:
-            think_tokens = 0
-        if think_tokens > 0:
-            if not max_tokens:
-                max_tokens = 1024
-            max_tokens += think_tokens
-            thinking = {"type": "enabled", "budget_tokens": think_tokens}
-            temperature = None
+            service_tier = settings.get("service_tier", "default") # If service_tier is a string, use it directly
+
+    # Determine API base URL based on model type or explicit setting
+    openai_api_base = settings.get("openai_api_base", os.getenv("OPENAI_API_BASE", app_settings.MODEL_API_URL))
+
+    # Initialize the model based on model_name
+    if "gpt" in model_name:
+        # OpenAI models
+        openai_api_key = settings.get("openai_api_key", os.getenv("OPENAI_API_KEY"))
+        if not openai_api_key:
+            raise ValueError("OPENAI_API_KEY environment variable not set or not found in settings.")
+
+        if service_tier == "flex":
+            model = FlexTierChatOpenAI(
+                model_name=model_name,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                openai_api_base=openai_api_base,
+                openai_api_key=openai_api_key,
+                service_tier=service_tier,
+                request_timeout=10.0 # Set a timeout for flex tier
+            )
         else:
-            thinking = {"type": "disabled"}
-            if temperature is None:
-                raise ValueError(f"Temperature is required for Claude models if reasoning_effort is not set")
-        if not max_tokens:
-            max_tokens = 1024
-        model = ChatAnthropic(model=model_name, temperature=temperature, thinking=thinking, max_tokens=max_tokens)
-    elif model_name.startswith("gpt-4"):
-        # GPT-4o models use temperature but not reasoning_effort
-        # Use FlexTierChatOpenAI for automatic fallback support
-        model = FlexTierChatOpenAI(
-            model_name=model_name, 
-            temperature=temperature, 
-            reasoning_effort=None, 
-            max_tokens=max_tokens, 
-            service_tier=service_tier,
-            timeout=timeout if service_tier == "flex" else None,
-            openai_api_base=settings.get("qwen_api_base"),
-            openai_api_key=settings.get("qwen_api_key")
-        )
-    elif re.search(r"^o[0-9]", model_name):
-        # o[0-9] models use reasoning_effort but not temperature
-        # Use FlexTierChatOpenAI for automatic fallback support
-        model = FlexTierChatOpenAI(
-            model_name=model_name, 
-            temperature=None, 
-            reasoning_effort=reasoning_effort, 
-            max_tokens=max_tokens, 
-            service_tier=service_tier,
-            timeout=timeout if service_tier == "flex" else None,
-            openai_api_base=settings.get("qwen_api_base"),
-            openai_api_key=settings.get("qwen_api_key")
-        )
-    elif model_name.startswith("Qwen"):
-        # 使用OpenAI兼容接口调用本地部署的QWEN模型
-        # 创建自定义请求头
-        default_headers = {}
-        if reasoning_effort is not None:
-            default_headers["X-Qwen-Enable-Thinking"] = "true"
-        else:
-            default_headers["X-Qwen-Enable-Thinking"] = "false"
-            
-        model = ChatOpenAI(
+            model = ChatOpenAI(
+                model_name=model_name,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                openai_api_base=openai_api_base,
+                openai_api_key=openai_api_key,
+            )
+    elif "claude" in model_name:
+        # Anthropic models
+        anthropic_api_key = settings.get("anthropic_api_key", os.getenv("ANTHROPIC_API_KEY"))
+        if not anthropic_api_key:
+            raise ValueError("ANTHROPIC_API_KEY environment variable not set or not found in settings.")
+        model = ChatAnthropic(
             model_name=model_name,
-            openai_api_base=settings["qwen_api_base"],
-            openai_api_key=settings["qwen_api_key"],
             temperature=temperature,
             max_tokens=max_tokens,
-            top_p=0.8,
-            presence_penalty=1.5,
-            default_headers=default_headers
+            anthropic_api_key=anthropic_api_key,
+        )
+    elif "o-model" in model_name:
+        # O-models (e.g., for reasoning)
+        openai_api_key = os.getenv("OPENAI_API_KEY")
+        if not openai_api_key:
+            raise ValueError("OPENAI_API_KEY environment variable not set.")
+        model = ChatOpenAI(
+            model_name=model_name,
+            temperature=None,  # O-models use reasoning_effort instead of temperature
+            max_tokens=max_tokens,
+            openai_api_base=openai_api_base,
+            openai_api_key=openai_api_key,
+        )
+        model.reasoning_effort = reasoning_effort
+    elif "Qwen" in model_name or "qwen" in model_name:
+        # For Qwen models, use ChatOpenAI with custom api_base
+        qwen_api_base = settings.get("qwen_api_base")
+        if not qwen_api_base and "claude" in settings:
+            qwen_api_base = settings["claude"].get("qwen_api_base")
+        if not qwen_api_base:
+            raise ValueError("Qwen API base URL not set or not found in settings.")
+        model = ChatOpenAI(
+            model_name=model_name,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            openai_api_base=qwen_api_base,
+            openai_api_key="default_key"  # Placeholder key for Qwen models
         )
     else:
-        raise ValueError(f"Model {model_name} not supported")
+        # Default to ChatOpenAI for other models, assuming OpenAI-compatible API
+        model = FlexTierChatOpenAI(
+            model_name=model_name,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            openai_api_base=openai_api_base,
+            service_tier=service_tier,
+            timeout=settings["flex_timeout"] if service_tier == "flex" else app_settings.DB_TIMEOUT,
+        )
 
     return model
 
-
-# main
 if __name__ == "__main__":
     from dotenv import load_dotenv
     load_dotenv(override=True)

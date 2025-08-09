@@ -42,7 +42,7 @@ def mock_load_settings():
                 'db_user': 'mock_db_user',
                 'db_password': 'mock_db_password',
                 'db_port': 5432,
-                'db_timeout': 300
+                'db_timeout': 60
             },
             'models': {
                 'sragent': 'mock_model_name'
@@ -130,7 +130,7 @@ if __name__ == '__main__':
                     'db_user': 'mock_db_user',
                     'db_password': 'mock_db_password',
                     'db_port': 5432,
-                    'db_timeout': 300
+                    'db_timeout': 60
                 },
                 'models': {
                     'sragent': 'Qwen3-235B-A22B',

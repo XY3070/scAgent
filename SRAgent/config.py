@@ -1,6 +1,5 @@
 from typing import Optional
 import os
-from typing import Optional
 from dotenv import load_dotenv
 
 load_dotenv() # 加载.env文件中的环境变量
@@ -21,7 +20,7 @@ class Config:
         # 模型API设置
         self.MODEL_API_URL: str = os.getenv('MODEL_API_URL', '')
         self.MODEL_NAME: str = os.getenv('MODEL_NAME', '')
-        self.DB_TIMEOUT: int = int(os.getenv('DB_TIMEOUT', '300'))
+        self.DB_TIMEOUT: int = int(os.getenv('DB_TIMEOUT', '60'))
 
         # 新增：控制在线访问的开关
         self.ONLINE_ACCESS_ENABLED = False # 用户明确表示不需要在线访问
