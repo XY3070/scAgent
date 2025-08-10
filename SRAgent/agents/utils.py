@@ -176,6 +176,7 @@ def set_model(
     """
     # Load settings
     settings = load_settings()
+    print(f"Loaded settings: {settings.as_dict()}")
 
     # Use provided params or get from settings
     if model_name is None:
@@ -202,109 +203,58 @@ def set_model(
             try:
                 reasoning_effort = settings["reasoning_effort"]["default"]
             except KeyError:
-                raise ValueError(f"No reasoning_effort was provided for agent '{agent_name}'")
+                raise ValueError(f"No reasoning effort was provided for agent '{agent_name}'")
 
-    # Get max_tokens from settings if not provided
-    if max_tokens is None:
-        try:
-            max_tokens = settings["max_tokens"][agent_name]
-        except KeyError:
-            try:
-                max_tokens = settings["max_tokens"]["default"]
-            except KeyError:
-                max_tokens = 4096 # Default to 4096 if not specified
-
-    # Get service_tier from settings if not provided
-    if service_tier is None:
-        if isinstance(settings.get("service_tier"), dict):
-            try:
-                service_tier = settings["service_tier"][agent_name]
-            except KeyError:
-                try:
-                    service_tier = settings["service_tier"]["default"]
-                except KeyError:
-                    service_tier = "default" # Default to default if not specified
-        else:
-            service_tier = settings.get("service_tier", "default") # If service_tier is a string, use it directly
-
-    # Determine API base URL based on model type or explicit setting
+    # Get API base URLs
     openai_api_base = settings.get("openai_api_base", os.getenv("OPENAI_API_BASE", app_settings.MODEL_API_URL))
+    qwen_api_base = settings.get("qwen_api_base", os.getenv("QWEN_API_BASE"))
 
-    # Initialize the model based on model_name
-    if "gpt" in model_name:
-        # OpenAI models
-        openai_api_key = settings.get("openai_api_key", os.getenv("OPENAI_API_KEY"))
-        if not openai_api_key:
-            raise ValueError("OPENAI_API_KEY environment variable not set or not found in settings.")
+    # Set API key and base URL from settings or environment variables
+    openai_api_key = settings.get("openai_api_key", os.getenv("OPENAI_API_KEY"))
+    anthropic_api_key = settings.get("anthropic_api_key", os.getenv("ANTHROPIC_API_KEY"))
+    
+    # For Qwen models, prioritize qwen_api_key from settings or environment
+    if "Qwen" in model_name:
+        openai_api_key = settings.get("qwen_api_key", os.getenv("QWEN_API_KEY", openai_api_key))
 
-        if service_tier == "flex":
-            model = FlexTierChatOpenAI(
-                model_name=model_name,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                openai_api_base=openai_api_base,
-                openai_api_key=openai_api_key,
-                service_tier=service_tier,
-                request_timeout=10.0 # Set a timeout for flex tier
-            )
-        else:
-            model = ChatOpenAI(
-                model_name=model_name,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                openai_api_base=openai_api_base,
-                openai_api_key=openai_api_key,
-            )
+
+    # Determine the model class and arguments
+    if "Qwen" in model_name:
+        model_class = FlexTierChatOpenAI
+        model_kwargs = {
+            "model_name": model_name,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "openai_api_base": qwen_api_base,  # Pass the Qwen API base URL
+            "openai_api_key": openai_api_key,
+            "service_tier": service_tier,
+            "request_timeout": settings.get("flex_timeout") if service_tier == "flex" else settings.get("db_timeout"),
+        }
     elif "claude" in model_name:
-        # Anthropic models
-        anthropic_api_key = settings.get("anthropic_api_key", os.getenv("ANTHROPIC_API_KEY"))
-        if not anthropic_api_key:
-            raise ValueError("ANTHROPIC_API_KEY environment variable not set or not found in settings.")
-        model = ChatAnthropic(
-            model_name=model_name,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            anthropic_api_key=anthropic_api_key,
-        )
-    elif "o-model" in model_name:
-        # O-models (e.g., for reasoning)
-        openai_api_key = os.getenv("OPENAI_API_KEY")
-        if not openai_api_key:
-            raise ValueError("OPENAI_API_KEY environment variable not set.")
-        model = ChatOpenAI(
-            model_name=model_name,
-            temperature=None,  # O-models use reasoning_effort instead of temperature
-            max_tokens=max_tokens,
-            openai_api_base=openai_api_base,
-            openai_api_key=openai_api_key,
-        )
-        model.reasoning_effort = reasoning_effort
-    elif "Qwen" in model_name or "qwen" in model_name:
-        # For Qwen models, use ChatOpenAI with custom api_base
-        qwen_api_base = settings.get("qwen_api_base")
-        if not qwen_api_base and "claude" in settings:
-            qwen_api_base = settings["claude"].get("qwen_api_base")
-        if not qwen_api_base:
-            raise ValueError("Qwen API base URL not set or not found in settings.")
-        model = ChatOpenAI(
-            model_name=model_name,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            openai_api_base=qwen_api_base,
-            openai_api_key="default_key"  # Placeholder key for Qwen models
-        )
+        model_class = ChatAnthropic
+        model_kwargs = {
+            "model_name": model_name,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "anthropic_api_key": anthropic_api_key,
+        }
     else:
-        # Default to ChatOpenAI for other models, assuming OpenAI-compatible API
-        model = FlexTierChatOpenAI(
-            model_name=model_name,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            openai_api_base=openai_api_base,
-            service_tier=service_tier,
-            timeout=settings["flex_timeout"] if service_tier == "flex" else app_settings.DB_TIMEOUT,
-        )
+        model_class = FlexTierChatOpenAI
+        model_kwargs = {
+            "model_name": model_name,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "openai_api_key": openai_api_key,
+            "service_tier": service_tier,
+            "request_timeout": settings.get("flex_timeout") if service_tier == "flex" else settings.get("db_timeout"),
+        }
 
-    return model
+    # Add reasoning_effort if it's an o-model
+    if reasoning_effort:
+        model_kwargs["reasoning_effort"] = reasoning_effort
+        model_kwargs["temperature"] = None # Reasoning effort overrides temperature
+
+    return model_class(**model_kwargs)
 
 if __name__ == "__main__":
     from dotenv import load_dotenv

@@ -92,6 +92,8 @@ test:
     find_datasets: "default"
     step_summary: "default"
     get_entrez_ids: "default"
+  qwen_api_base: "http://10.28.1.21:30080/v1"
+  qwen_api_key: "your_qwen_api_key" # This will be overridden by .env
     
 prod:
   db_name: "scagent"
