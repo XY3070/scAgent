@@ -2,22 +2,26 @@ import json
 import re
 import asyncio
 from datetime import datetime
+from pathlib import Path
 import os
 import time
 
 # Set the environment for Dynaconf to 'test' to load model configurations
+# This must be done before importing load_settings
 os.environ["DYNACONF_ENV"] = "test"
 
 from dotenv import load_dotenv
 from SRAgent.agents.utils import set_model, load_settings
 
+
 # ====== Config ======
-INPUT_FILE = "/ssd2/xuyuan/output/output_single_cell.json"
+INPUT_FILE = "/ssd2/xuyuan/output/output_single_cell.json"  # the output of the second filter
 OUTPUT_FILE = "/ssd2/xuyuan/output/metadata_try.json"
 INITIAL_CONCURRENCY = 5
 MAX_CONCURRENCY = 10
 MIN_CONCURRENCY = 1
 RETRY_LIMIT = 2
+
 
 # ====== Init Model ======
 load_dotenv()
@@ -30,39 +34,39 @@ model = set_model(
     settings=settings
 )
 
+
 # ====== Helper Functions ======
-def extract_json_from_response(text: str) -> str:
+def extract_json_from_response(text):
     """
-    Extract JSON from model response text.
-    - Remove <think>...</think> or 《...》 thinking chains
-    - Prefer ```json { ... } ``` block
-    - Otherwise match first {...} block
-    - Fallback: If starts with "project_id", wrap in {}
+    Extract JSON object from model response:
+    1. Remove 《...》 reasoning chain.
+    2. Prefer the ```json ...``` code block if present.
+    3. Otherwise, match the first {...} block.
+    4. If the outer {} is missing but content starts with "project_id",
+       auto-wrap it with {}.
     """
-    if not isinstance(text, str):
-        raise ValueError("model response is not a string")
+    # Remove reasoning chain
+    cleaned = re.sub(r"《.*?》", "", text, flags=re.DOTALL).strip()
 
-    # remove possible thinking chains
-    cleaned = re.sub(r"<think>.*?</think>|《.*?》", "", text, flags=re.DOTALL).strip()
+    # Prefer: ```json ... ```
+    match = re.search(r"```json\s*(\{.*?\})\s*```", cleaned, flags=re.DOTALL)
+    if match:
+        return match.group(1).strip()
 
-    # prefer ```json ... ```
-    m = re.search(r"```json\s*(\{.*?\})\s*```", cleaned, flags=re.DOTALL)
-    if m:
-        return m.group(1).strip()
+    # Match standard JSON object {...}
+    match = re.search(r"\{[\s\S]*\}", cleaned)
+    if match:
+        return match.group(0).strip()
 
-    # match first {...}
-    m = re.search(r"\{[\s\S]*\}", cleaned)
-    if m:
-        return m.group(0).strip()
-
-    # fallback: "project_id": [...]
-    m = re.search(r'"project_id"\s*:\s*\[.*', cleaned, flags=re.DOTALL)
-    if m:
-        candidate = m.group(0).strip()
+    # Last resort: missing outer {} but starting with "project_id"
+    match = re.search(r'"project_id"\s*:\s*\[.*', cleaned, flags=re.DOTALL)
+    if match:
+        candidate = match.group(0).strip()
         wrapped = "{\n" + candidate.rstrip(",") + "\n}"
         return wrapped
 
     raise ValueError("No JSON object found in model output")
+
 
 PROMPT_TEMPLATE = """
 You are a bioinformatics expert. Extract the following metadata from the given experiment data.
@@ -104,49 +108,67 @@ Here is the experiment data:
 Return only one complete JSON object as the output, starting with '{{' and ending with '}}'.
 """
 
+
 # ====== Core Extraction ======
 async def extract_metadata(semaphore, exp_id, exp_data):
-    async with semaphore:
+    """
+    Call model to extract metadata
+    """
+    async with semaphore:  # 控制并发数量
         meta_subset = {
             "shared_metadata": exp_data.get("shared_metadata", {}),
             "ai_targeted_metadata": exp_data.get("ai_targeted_metadata", {}),
-            "sample_records": exp_data.get("individual_records", [])[:20]
+            "sample_records": exp_data.get("individual_records", [])[:20]  # avoid token limit
         }
         meta_str = json.dumps(meta_subset, ensure_ascii=False)
 
-        for attempt in range(1, RETRY_LIMIT + 1):
+        for attempt in range(RETRY_LIMIT):
             try:
                 start_time = time.time()
+                resp = await model.ainvoke([{"role": "user", "content": PROMPT_TEMPLATE.format(metadata_json=meta_str)}])
+                end_time = time.time()
+                
+                # Extract JSON
+                json_str = extract_json_from_response(resp.content)
+                
+                # 在尝试解析之前打印要解析的JSON字符串
+                print(f"[DEBUG] JSON string to parse for {exp_id} (attempt {attempt+1}):")
+                print(repr(json_str))
+                print("-" * 60)
 
-                # Interpolate meta_str into prompt_content
-                prompt_content = PROMPT_TEMPLATE.replace("{metadata_json}", meta_str)
-
-                resp = await model.ainvoke([{"role": "user", "content": prompt_content}])
-
-                # resp might be an object (e.g., AIMessage)
-                resp_text = getattr(resp, "content", None)
-                if resp_text is None:
-                    # If no content, try to convert resp to str
-                    resp_text = str(resp)
-
-                # Extract and parse JSON
-                json_str = extract_json_from_response(resp_text)
+                # Parse JSON
                 result = json.loads(json_str)
-
-                response_time = time.time() - start_time
+                
+                # 计算响应时间
+                response_time = end_time - start_time
                 return exp_id, result, response_time
 
-            except Exception as e:
-                # Reserve minimum logging for error location
-                print(f"[Attempt {attempt}] {exp_id} error: {e}")
-                if attempt < RETRY_LIMIT:
-                    await asyncio.sleep(1)
-                else:
+            except json.JSONDecodeError as e:
+                print(f"[ERROR] {exp_id} JSON decode error: {e}")
+                print(f"[DEBUG] Problematic JSON string for {exp_id}:")
+                print(repr(json_str))
+                print("-" * 60)
+                if attempt == RETRY_LIMIT - 1:  # 最后一次尝试
+                    # 返回一个空的元数据对象而不是抛出异常
                     return exp_id, {}, None
+                await asyncio.sleep(1)
+            except Exception as e:
+                print(f"[ERROR] {exp_id} parse error: {e}")
+                print(f"[DEBUG] Problematic response for {exp_id}:")
+                print(repr(resp.content if 'resp' in locals() else 'No response'))
+                print("-" * 60)
+                if attempt == RETRY_LIMIT - 1:  # 最后一次尝试
+                    # 返回一个空的元数据对象而不是抛出异常
+                    return exp_id, {}, None
+                await asyncio.sleep(1)
+
+        return exp_id, {}, None
+
 
 async def process_batch(semaphore, batch):
     tasks = [extract_metadata(semaphore, exp_id, exp_data) for exp_id, exp_data in batch]
     return await asyncio.gather(*tasks)
+
 
 # ====== Main Entry ======
 async def main():
@@ -156,54 +178,39 @@ async def main():
     experiments = data["ai_data"]["hierarchical_data"]["GSE"]["experiments"]
     items = list(experiments.items())
 
+    # 只处理前3个项目进行调试
+    items = items[:3]
+
     output = {
         "metadata_extraction_timestamp": datetime.now().isoformat(),
         "projects": {}
     }
 
-    current_concurrency = INITIAL_CONCURRENCY
+    # 初始化并发控制
+    current_concurrency = 1  # 只使用1个并发以简化调试
     semaphore = asyncio.Semaphore(current_concurrency)
-
+    
+    # 用于跟踪响应时间的变量
     response_times = []
     batch_count = 0
 
-    i = 0
-    total = len(items)
-    while i < total:
-        batch_size = min(current_concurrency, total - i)
-        batch = items[i:i + batch_size]
-
-        # Create tasks for current batch (using current semaphore)
+    for i in range(0, len(items), current_concurrency):
+        batch = items[i:i+current_concurrency]
         results = await process_batch(semaphore, batch)
-
-        # Store results and record response time
+        
+        # 处理结果并收集响应时间
         for exp_id, meta, response_time in results:
-            output["projects"][exp_id] = meta
             if response_time is not None:
                 response_times.append(response_time)
-
-        i += batch_size
+            output["projects"][exp_id] = meta
+        
         batch_count += 1
-
-        # Every 3 batches, adjust concurrency based on average response time
-        if batch_count % 3 == 0 and response_times:
-            avg_rt = sum(response_times) / len(response_times)
-            if avg_rt > 30 and current_concurrency > MIN_CONCURRENCY:
-                current_concurrency = max(MIN_CONCURRENCY, current_concurrency - 1)
-                print(f"Decreasing concurrency to {current_concurrency} (avg rt {avg_rt:.1f}s)")
-            elif avg_rt < 10 and current_concurrency < MAX_CONCURRENCY:
-                current_concurrency = min(MAX_CONCURRENCY, current_concurrency + 1)
-                print(f"Increasing concurrency to {current_concurrency} (avg rt {avg_rt:.1f}s)")
-
-            # Update semaphore
-            semaphore = asyncio.Semaphore(current_concurrency)
-            response_times = []
-            await asyncio.sleep(0.3)
 
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         json.dump(output, f, ensure_ascii=False, indent=2)
 
     print(f"✅ Metadata extraction completed for {len(output['projects'])} projects.")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -4,9 +4,9 @@ default:
   db_port: 5432
   db_user: "yanglab"
   db_password: "" 
-  db_timeout: 60
+  db_timeout: 120
   service_tier: "standard"
-  flex_timeout: 180
+  flex_timeout: 360
 test:
   db_name: "scagent"
   models:
