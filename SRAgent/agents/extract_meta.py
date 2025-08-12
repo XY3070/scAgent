@@ -12,8 +12,8 @@ from dotenv import load_dotenv
 from SRAgent.agents.utils import set_model, load_settings
 
 # ====== Config ======
-INPUT_FILE = "/ssd2/xuyuan/output/output_single_cell.json"
-OUTPUT_FILE = "/ssd2/xuyuan/output/metadata_try.json"
+INPUT_FILE = "/ssd2/xuyuan/output/output_sc_final.json"
+OUTPUT_FILE = "/ssd2/xuyuan/output/metadata_extract.json"
 INITIAL_CONCURRENCY = 5
 MAX_CONCURRENCY = 10
 MIN_CONCURRENCY = 1
