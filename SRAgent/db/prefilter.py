@@ -393,7 +393,94 @@ class SingleCellFilter(BaseFilter):
         return result
 
 
-class CellLineFilter(BaseFilter):
+class ExclusionSingleCellFilter(BaseFilter):
+    """
+    Exclusion-based single cell filter class.
+    """
+
+    # Keywords that strongly indicate non-single cell data
+    # Balanced approach: Keep definite non-single-cell keywords and make high-risk ones more specific
+    EXCLUDE_PATTERNS = [
+        # Definite bulk technologies (should always be excluded)
+        r'\bbulk RNA\b', r'\bbulk sequencing\b', r'\bbulk expression\b',
+        # Definite non-RNA-seq technologies (should always be excluded)
+        r'\bmicroarray\b', r'\bqPCR\b', r'\bRT-qPCR\b', r'\bquantitative PCR\b',
+        # Definite other omics (should always be excluded)
+        r'\bChIP-seq\b', r'\bHi-C\b', r'\b[45]C\b', r'\bcapture C\b',
+        r'\bwhole exome sequencing\b', r'\bWES\b', r'\bwhole genome sequencing\b', r'\bWGS\b',
+        r'\bDNA-seq\b', 
+        # ATAC-seq needs special handling because scATAC-seq exists
+        r'\bATAC-seq\s+(?=.*(bulk|pool))',  # Only exclude bulk ATAC-seq
+        r'\bmetagenomic\b', r'\bamplicon sequencing\b', r'\b16S rRNA\b',
+        # Definite bulk sample preparations (should always be excluded)
+        r'\bpooled sequencing\b', r'\bpopulation sequencing\b', r'\bmixed culture\b',
+        r'\btissue homogenate\b', r'\bcell lysate\b', r'\bwhole tissue\b',
+        # Definite other technologies (should always be excluded)
+        r'\bflow cytometry\b', r'\bFACS\b', r'\bmass spectrometry\b', r'\bproteomics\b',
+        r'\bimmunohistochemistry\b', r'\bwestern blot\b', r'\bELISA\b',
+        r'\bmicroscopy\b', r'\bimaging\b', r'\bhistology\b',
+        # Definite study contexts that are not single-cell
+        r'\bpatient derived xenograft\b', r'\bPDX\b',
+        r'\bclinical trial\b', r'\bcohort study\b', r'\bepidemiological study\b',
+        r'\breview article\b', r'\bmeta-analysis\b', r'\bdatabase\b',
+        r'\bsimulation\b', r'\bcomputational model\b', r'\balgorithm\b',
+        r'\bsynthetic data\b', r'\bspike-in\b', r'\bcontrol sample\b',
+        # More specific patterns for high-risk terms to reduce false negatives
+        # Keep these but make them more specific to avoid excluding legitimate single-cell data
+        r'\b(cell line|cell lines)\s+(?=.*(bulk|microarray|qPCR|ChIP|proteom))',  # Only exclude cell lines in bulk contexts
+        r'\borganoid\s+(?=.*(bulk|microarray|qPCR|ChIP|proteom))',  # Only exclude organoids in bulk contexts
+        r'\bspheroid\s+(?=.*(bulk|microarray|qPCR|ChIP|proteom))',  # Only exclude spheroids in bulk contexts
+        r'\bcell culture\s+(?=.*(bulk|microarray|qPCR|ChIP|proteom))',  # Only exclude cell culture in bulk contexts
+        # Animal model is kept in a separate filter context, not here
+    ]
+
+    def __init__(self, conn: connection):
+        super().__init__(conn, "Exclusion Single Cell Filter")
+
+    def apply(self, input_result: FilterResult) -> FilterResult:
+        """
+        Filter records by excluding non-single cell keywords.
+        """
+        if input_result.data.empty:
+            return input_result
+
+        # Define all relevant text columns from the provided list
+        text_columns = [
+            'study_title', 'summary', 'overall_design', 'scientific_name',
+            'library_strategy', 'technology', 'characteristics_ch1', 'gse_title',
+            'gsm_title', 'organism_ch1', 'source_name_ch1', 'common_name',
+            'experiment_name', 'experiment_title', 'design_description',
+            'library_name', 'library_selection', 'library_construction_protocol',
+            'platform', 'instrument_model', 'platform_parameters',
+            'experiment_attribute', 'sample_alias', 'description',
+            'sample_attribute', 'study_abstract', 'center_project_name',
+            'study_description', 'study_attribute', 'submission_comment',
+            'gsm_description', 'data_processing', 'overall_design'
+        ]
+
+        exclude_mask = pd.Series([False] * len(input_result.data), index=input_result.data.index)
+
+        for pattern in self.EXCLUDE_PATTERNS:
+            for col in text_columns:
+                if col in input_result.data.columns:
+                    # Use .fillna('') to treat NaN as empty strings for regex matching
+                    exclude_mask |= input_result.data[col].fillna('').str.contains(pattern, case=False, na=False, regex=True)
+
+        # Keep records that are NOT in the exclude_mask
+        filtered_df = input_result.data[~exclude_mask].copy()
+
+        result = FilterResult(
+            data=filtered_df,
+            count=len(filtered_df),
+            filter_name=self.name,
+            description="Excluded records based on non-single cell keywords"
+        )
+
+        result.log_result(input_result.count)
+        return result
+
+
+class CellLineFilter:
     """
     Cell line filter class.
     """
@@ -687,7 +774,8 @@ def create_filter_chain(conn: connection,
                        include_tissue_source: bool = True,
                        include_sequencing_strategy: bool = False,
                        include_cancer_status: bool = False,
-                       include_search_term: bool = False) -> List[BaseFilter]:
+                       include_search_term: bool = False,
+                       include_exclusion_single_cell: bool = False) -> List[BaseFilter]:
     """
     Create a prefilter chain.
     
@@ -723,6 +811,9 @@ def create_filter_chain(conn: connection,
     
     if include_single_cell:
         filters.append(SingleCellFilter(conn, min_sc_confidence))
+
+    if include_exclusion_single_cell:
+        filters.append(ExclusionSingleCellFilter(conn))
     
     if include_tissue_source:
         filters.append(TissueSourceFilter(conn))
@@ -782,7 +873,8 @@ class FilterChainManager:
                             include_tissue_source: bool = True,
                             include_sequencing_strategy: bool = False,
                             include_cancer_status: bool = False,
-                            include_search_term: bool = False) -> List[BaseFilter]:
+                            include_search_term: bool = False,
+                            include_exclusion_single_cell: bool = False) -> List[BaseFilter]:
         """
         Create a standard filter chain with enhanced options.
         
@@ -818,6 +910,9 @@ class FilterChainManager:
         
         if include_single_cell:
             filters.append(SingleCellFilter(self.conn, min_sc_confidence, use_sc_fallback))
+
+        if include_exclusion_single_cell:
+            filters.append(ExclusionSingleCellFilter(self.conn))
         
         if include_tissue_source:
             filters.append(TissueSourceFilter(self.conn))
@@ -937,7 +1032,8 @@ def example_enhanced_usage():
         search_term="cancer",
         limit=50,
         min_sc_confidence=1,  # Lower threshold
-        use_sc_fallback=True  # Enable text-based fallback
+        use_sc_fallback=True,  # Enable text-based fallback
+        include_exclusion_single_cell=True # Enable exclusion-based single cell filter
     )
     
     # Apply with enhanced reporting
