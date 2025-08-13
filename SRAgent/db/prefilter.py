@@ -11,6 +11,7 @@ import json
 
 logger = logging.getLogger(__name__)
 
+
 @dataclass
 class FilterResult:
     """
@@ -56,6 +57,7 @@ class FilterResult:
             "reduction_pct": self.reduction_pct
         }
 
+
 class BaseFilter(ABC):
     """
     Base filter class.
@@ -97,6 +99,7 @@ class BaseFilter(ABC):
             except:
                 pass
             return pd.DataFrame()
+
 
 class InitialDatasetFilter(BaseFilter):
     """
@@ -163,6 +166,7 @@ class InitialDatasetFilter(BaseFilter):
         result.log_result()
         return result
 
+
 class BasicAvailabilityFilter(BaseFilter):
     """
     Basic availability filter class.
@@ -215,6 +219,7 @@ class BasicAvailabilityFilter(BaseFilter):
         
         result.log_result(input_result.count)
         return result
+
 
 class OrganismFilter(BaseFilter):
     """
@@ -284,6 +289,7 @@ class OrganismFilter(BaseFilter):
         
         result.log_result(input_result.count)
         return result
+
 
 class SingleCellFilter(BaseFilter):
     """
@@ -381,25 +387,58 @@ class CellLineFilter(BaseFilter):
     """
     Cell line filter class.
     """
+    
+    def apply(self, input_result: FilterResult) -> FilterResult:
+        """
+        Filter samples that are cell lines.
+        """
+        if input_result.data.empty:
+            return input_result
+        
+        # Cell line keywords
+        cell_line_patterns = [
+            r'\b(?:cell line|immortalized|HEK293|HeLa|Jurkat|CHO|NIH/3T3|K562|U2OS|HEPG2|A549)\b'
+        ]
+        
+        # Filter records that are cell lines in memory
+        cell_line_mask = pd.Series([False] * len(input_result.data), index=input_result.data.index)
+        
+        text_columns = ['overall_design', 'characteristics_ch1', 'summary', 'source_name_ch1', 'sample_attribute']
+        
+        for pattern in cell_line_patterns:
+            for col in text_columns:
+                if col in input_result.data.columns:
+                    cell_line_mask |= input_result.data[col].str.contains(pattern, case=False, na=False, regex=True)
+        
+        filtered_df = input_result.data[cell_line_mask].copy()
+        
+        result = FilterResult(
+            data=filtered_df,
+            count=len(filtered_df),
+            filter_name="Cell Line Filter",
+            description="Samples identified as cell lines"
+        )
+        
+        result.log_result(input_result.count)
+        return result
 
 
-
-class SequencingStrategyFilter(BaseFilter):
+class SequencingStrategyFilter(BaseFilter):                                                                                                                                             
     """
     Sequencing strategy filter class.
     """
-    
+
     def apply(self, input_result: FilterResult) -> FilterResult:
         """
         Filter single cell sequencing technologies.
         """
         if input_result.data.empty:
             return input_result
-        
+            
         # Define single cell sequencing technologies
         sc_tech_patterns = [
-            r'10[xX]', r'\b10x\b', 'Chromium', 'SMART-seq2', 'Drop-seq', 
-            'microwell', r'C1\s?System', 'Single cell sequencing', 'scRNA-seq', 
+            r'10[xX]', r'\b10x\b', 'Chromium', 'SMART-seq2', 'Drop-seq',
+            'microwell', r'C1\s?System', 'Single cell sequencing', 'scRNA-seq',
             'snRNA-seq', 'CITE-seq'
         ]
         
@@ -417,13 +456,13 @@ class SequencingStrategyFilter(BaseFilter):
                 include_mask |= input_result.data['library_strategy'].str.contains(pattern, case=False, na=False, regex=True)
             if 'summary' in input_result.data.columns:
                 include_mask |= input_result.data['summary'].str.contains(pattern, case=False, na=False, regex=True)
-        
+                
         for pattern in exclude_patterns:
             if 'overall_design' in input_result.data.columns:
                 exclude_mask |= input_result.data['overall_design'].str.contains(pattern, case=False, na=False, regex=True)
             if 'summary' in input_result.data.columns:
                 exclude_mask |= input_result.data['summary'].str.contains(pattern, case=False, na=False, regex=True)
-        
+                
         final_mask = include_mask & ~exclude_mask
         filtered_df = input_result.data[final_mask].copy()
         
@@ -436,6 +475,7 @@ class SequencingStrategyFilter(BaseFilter):
         
         result.log_result(input_result.count)
         return result
+
 
 class CancerStatusFilter(BaseFilter):
     """
