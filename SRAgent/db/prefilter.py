@@ -221,6 +221,24 @@ class OrganismFilter(BaseFilter):
     Organism filter class.
     """
     
+    # Common false positive keywords that should be excluded even if they match human
+    EXCLUDE_PATTERNS = [
+        r'\bmouse\b', r'\bmurine\b', r'\bmus musculus\b',  # Mouse-related terms
+        r'\brat\b', r'\brattus\b', r'\brattus norvegicus\b',  # Rat-related terms
+        r'\bfruit fly\b', r'\bdrosophila\b', r'\bdrosophila melanogaster\b',  # Fruit fly
+        r'\bzebrafish\b', r'\bdanio rerio\b',  # Zebrafish
+        r'\bmonkey\b', r'\bmacaque\b', r'\brhesus\b',  # Non-human primates
+        r'\bmodel organism\b',  # Generic model organism mentions
+        r'\bcell line\b',  # Cell lines that might be human but are not primary tissue
+        r'\bhepg2\b', r'\bhek293\b', r'\bhela\b',  # Common human cell lines
+        r'\bxenograft\b',  # Xenograft models (human cells in other organisms)
+        r'\bhumanized\b',  # Humanized models (modified organisms)
+        r'\bsars-cov\b', r'\bsars cov\b', r'\bcovid\b', r'\bsars-2\b', r'\bnovel coronavirus\b',  # Viruses often associated with humans
+        r'\bh1n1\b', r'\bh3n2\b', r'\binfluenza\b',  # Influenza viruses
+        r'\bhiv\b', r'\bhepatitis\b', r'\bebv\b', r'\bepstein-barr\b',  # Other human-associated viruses
+        r'\bvirus\b.*\bhomo sapiens\b', r'\bhomo sapiens\b.*\bvirus\b'  # Virus and human co-occurrence patterns
+    ]
+    
     def __init__(self, conn: connection, organisms: List[str]):
         super().__init__(conn)
         self.organisms = organisms
@@ -239,17 +257,29 @@ class OrganismFilter(BaseFilter):
         human_mask = (
             input_result.data['organism_ch1'].str.contains('homo sapiens', case=False, na=False) |
             input_result.data['scientific_name'].str.contains('homo sapiens', case=False, na=False) |
+            input_result.data['organism'].str.contains('homo sapiens', case=False, na=False) |
             input_result.data['source_name_ch1'].str.contains('human', case=False, na=False) |
             input_result.data['common_name'].str.contains('human', case=False, na=False)
         )
         
-        filtered_df = input_result.data[human_mask].copy()
+        # Create exclusion mask for false positive keywords (only in the same 5 columns used for human matching)
+        exclude_mask = pd.Series([False] * len(input_result.data), index=input_result.data.index)
+        human_matching_columns = ['organism_ch1', 'scientific_name', 'organism', 'source_name_ch1', 'common_name']
+        
+        for pattern in self.EXCLUDE_PATTERNS:
+            for col in human_matching_columns:
+                if col in input_result.data.columns:
+                    exclude_mask |= input_result.data[col].str.contains(pattern, case=False, na=False, regex=True)
+        
+        # Apply both inclusion and exclusion filters
+        final_mask = human_mask & ~exclude_mask
+        filtered_df = input_result.data[final_mask].copy()
         
         result = FilterResult(
             data=filtered_df,
             count=len(filtered_df),
             filter_name="Organism Filter",
-            description="Human samples only"
+            description="Human samples only (excluded common false positives including viruses)"
         )
         
         result.log_result(input_result.count)
@@ -345,6 +375,14 @@ class SingleCellFilter(BaseFilter):
         
         result.log_result(input_result.count)
         return result
+
+
+class CellLineFilter(BaseFilter):
+    """
+    Cell line filter class.
+    """
+
+
 
 class SequencingStrategyFilter(BaseFilter):
     """
@@ -604,6 +642,11 @@ def create_filter_chain(conn: connection,
                        search_term: Optional[str] = None,
                        limit: int = 100,
                        min_sc_confidence: int = 1,
+                       include_initial_dataset: bool = True,
+                       include_basic_availability: bool = True,
+                       include_organism: bool = True,
+                       include_single_cell: bool = True,
+                       include_tissue_source: bool = True,
                        include_sequencing_strategy: bool = False,
                        include_cancer_status: bool = False,
                        include_search_term: bool = False) -> List[BaseFilter]:
@@ -616,6 +659,11 @@ def create_filter_chain(conn: connection,
         search_term: Search keyword
         limit: Limit on the number of records returned
         min_sc_confidence: Minimum single-cell confidence score
+        include_initial_dataset: Whether to include initial dataset filter
+        include_basic_availability: Whether to include basic availability filter
+        include_organism: Whether to include organism filter
+        include_single_cell: Whether to include single cell filter
+        include_tissue_source: Whether to include tissue source filter
         include_sequencing_strategy: Whether to include sequencing strategy filter
         include_cancer_status: Whether to include cancer status filter
         include_search_term: Whether to include keyword search filter
@@ -623,14 +671,23 @@ def create_filter_chain(conn: connection,
     Returns:
         List of filter objects
     """
-    # Create base filters that are always included
-    filters = [
-        InitialDatasetFilter(conn),
-        BasicAvailabilityFilter(conn),
-        OrganismFilter(conn, organisms),
-        SingleCellFilter(conn, min_sc_confidence),
-        TissueSourceFilter(conn)
-    ]
+    # Create base filters based on parameters
+    filters = []
+    
+    if include_initial_dataset:
+        filters.append(InitialDatasetFilter(conn))
+    
+    if include_basic_availability:
+        filters.append(BasicAvailabilityFilter(conn))
+    
+    if include_organism:
+        filters.append(OrganismFilter(conn, organisms))
+    
+    if include_single_cell:
+        filters.append(SingleCellFilter(conn, min_sc_confidence))
+    
+    if include_tissue_source:
+        filters.append(TissueSourceFilter(conn))
     
     # Add optional filters based on parameters
     if include_sequencing_strategy:
@@ -680,6 +737,11 @@ class FilterChainManager:
                             limit: int = 100,
                             min_sc_confidence: int = 1,
                             use_sc_fallback: bool = True,
+                            include_initial_dataset: bool = True,
+                            include_basic_availability: bool = True,
+                            include_organism: bool = True,
+                            include_single_cell: bool = True,
+                            include_tissue_source: bool = True,
                             include_sequencing_strategy: bool = False,
                             include_cancer_status: bool = False,
                             include_search_term: bool = False) -> List[BaseFilter]:
@@ -692,6 +754,11 @@ class FilterChainManager:
             limit: Limit on the number of records returned
             min_sc_confidence: Minimum single-cell confidence score
             use_sc_fallback: Whether to use fallback strategy for single cell detection
+            include_initial_dataset: Whether to include initial dataset filter
+            include_basic_availability: Whether to include basic availability filter
+            include_organism: Whether to include organism filter
+            include_single_cell: Whether to include single cell filter
+            include_tissue_source: Whether to include tissue source filter
             include_sequencing_strategy: Whether to include sequencing strategy filter
             include_cancer_status: Whether to include cancer status filter
             include_search_term: Whether to include keyword search filter
@@ -699,16 +766,24 @@ class FilterChainManager:
         Returns:
             List of filter objects
         """
-        # Create base filters that are always included
-        filters = [
-            InitialDatasetFilter(self.conn),
-            BasicAvailabilityFilter(self.conn),
-            OrganismFilter(self.conn, organisms),
-            SingleCellFilter(self.conn, min_sc_confidence, use_sc_fallback),
-            TissueSourceFilter(self.conn)
-        ]
+        filters = []
         
-        # Add optional filters based on parameters
+        # Add filters based on parameters
+        if include_initial_dataset:
+            filters.append(InitialDatasetFilter(self.conn))
+        
+        if include_basic_availability:
+            filters.append(BasicAvailabilityFilter(self.conn))
+        
+        if include_organism and organisms:
+            filters.append(OrganismFilter(self.conn, organisms))
+        
+        if include_single_cell:
+            filters.append(SingleCellFilter(self.conn, min_sc_confidence, use_sc_fallback))
+        
+        if include_tissue_source:
+            filters.append(TissueSourceFilter(self.conn))
+        
         if include_sequencing_strategy:
             filters.append(SequencingStrategyFilter(self.conn))
         
@@ -718,8 +793,9 @@ class FilterChainManager:
         if include_search_term and search_term:
             filters.append(KeywordSearchFilter(self.conn, search_term))
         
-        # Always add limit filter at the end
-        filters.append(LimitFilter(self.conn, limit))
+        # Always add limit filter at the end if specified
+        if limit > 0:
+            filters.append(LimitFilter(self.conn, limit))
         
         return filters
     

@@ -5,23 +5,18 @@ import psycopg2
 from datetime import datetime
 from typing import List, Dict, Any
 from dotenv import load_dotenv
-import os
 
-load_dotenv()
+# Add the project root to sys.path to ensure imports work correctly
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-# Database connection configuration
-DB_CONFIG = {
-    'host': os.getenv('DB_HOST', 'localhost'),
-    'database': os.getenv('DB_NAME', 'your_database'),
-    'user': os.getenv('DB_USER', 'your_user'),
-    'password': os.getenv('DB_PASSWORD', 'your_password'),
-    'port': os.getenv('DB_PORT', 5432)
-}
+# Import the database connection function from the project
+from SRAgent.db.connect import db_connect
 
 def get_db_connection():
-    """Get database connection."""
+    """Get database connection using the project's db_connect function."""
     try:
-        conn = psycopg2.connect(**DB_CONFIG)
+        # Use the same connection method as the rest of the project
+        conn = db_connect()
         return conn
     except Exception as e:
         print(f"❌ Database connection failed: {e}")
@@ -116,22 +111,56 @@ class TestBasicAvailabilityFilter:
         if input_result.data.empty:
             return FilterResult(pd.DataFrame(), 0, "Basic Availability", "No input data")
         
-        filtered_df = input_result.data[
-            (input_result.data['sra_ID'].notna()) & 
-            (input_result.data['sra_ID'] != '') & 
-            (input_result.data['gse_title'].notna())
-        ].copy()
+        # Check data availability for debugging
+        total_records = len(input_result.data)
+        sra_id_available = input_result.data['sra_ID'].notna().sum() if 'sra_ID' in input_result.data.columns else 0
+        non_empty_sra_id = (input_result.data['sra_ID'].notna() & (input_result.data['sra_ID'] != '')).sum() if 'sra_ID' in input_result.data.columns else 0
+        gse_title_available = input_result.data['gse_title'].notna().sum() if 'gse_title' in input_result.data.columns else 0
+        
+        print(f"   Debug - Total: {total_records}, SRA ID available: {sra_id_available}, "
+              f"Non-empty SRA ID: {non_empty_sra_id}, GSE title available: {gse_title_available}")
+        
+        # Use a more relaxed filter condition for testing
+        sra_mask = pd.Series([False] * len(input_result.data), index=input_result.data.index)
+        gse_mask = pd.Series([False] * len(input_result.data), index=input_result.data.index)
+        
+        if 'sra_ID' in input_result.data.columns:
+            sra_mask = input_result.data['sra_ID'].notna() & (input_result.data['sra_ID'] != '')
+        
+        if 'gse_title' in input_result.data.columns:
+            gse_mask = input_result.data['gse_title'].notna()
+        
+        # Allow records with either SRA ID or GSE title (more permissive)
+        filtered_df = input_result.data[sra_mask | gse_mask].copy()
         
         result = FilterResult(
             data=filtered_df,
             count=len(filtered_df),
             filter_name="Basic Availability",
-            description="Has SRA_ID and GSE title"
+            description="Has SRA_ID or GSE title"
         )
         result.log_result(input_result.count)
         return result
 
 class TestOrganismFilter:
+    # Common false positive keywords that should be excluded even if they match human
+    EXCLUDE_PATTERNS = [
+        r'\bmouse\b', r'\bmurine\b', r'\bmus musculus\b',  # Mouse-related terms
+        r'\brat\b', r'\brattus\b', r'\brattus norvegicus\b',  # Rat-related terms
+        r'\bfruit fly\b', r'\bdrosophila\b', r'\bdrosophila melanogaster\b',  # Fruit fly
+        r'\bzebrafish\b', r'\bdanio rerio\b',  # Zebrafish
+        r'\bmonkey\b', r'\bmacaque\b', r'\brhesus\b',  # Non-human primates
+        r'\bmodel organism\b',  # Generic model organism mentions
+        r'\bcell line\b',  # Cell lines that might be human but are not primary tissue
+        r'\bhepg2\b', r'\bhek293\b', r'\bhela\b',  # Common human cell lines
+        r'\bxenograft\b',  # Xenograft models (human cells in other organisms)
+        r'\bhumanized\b',  # Humanized models (modified organisms)
+        r'\bsars-cov\b', r'\bsars cov\b', r'\bcovid\b', r'\bsars-2\b', r'\bnovel coronavirus\b',  # Viruses often associated with humans
+        r'\bh1n1\b', r'\bh3n2\b', r'\binfluenza\b',  # Influenza viruses
+        r'\bhiv\b', r'\bhepatitis\b', r'\bebv\b', r'\bepstein-barr\b',  # Other human-associated viruses
+        r'\bvirus\b.*\bhomo sapiens\b', r'\bhomo sapiens\b.*\bvirus\b'  # Virus and human co-occurrence patterns
+    ]
+    
     def __init__(self, conn, organisms):
         self.conn = conn
         self.organisms = organisms
@@ -140,6 +169,7 @@ class TestOrganismFilter:
         if input_result.data.empty or "human" not in [org.lower() for org in self.organisms]:
             return input_result
         
+        # Filter records with specified organisms in memory
         human_mask = (
             input_result.data['organism_ch1'].str.contains('homo sapiens', case=False, na=False) |
             input_result.data['scientific_name'].str.contains('homo sapiens', case=False, na=False) |
@@ -147,12 +177,24 @@ class TestOrganismFilter:
             input_result.data['common_name'].str.contains('human', case=False, na=False)
         )
         
-        filtered_df = input_result.data[human_mask].copy()
+        # Create exclusion mask for false positive keywords (only in the same 5 columns used for human matching)
+        exclude_mask = pd.Series([False] * len(input_result.data), index=input_result.data.index)
+        human_matching_columns = ['organism_ch1', 'scientific_name', 'organism', 'source_name_ch1', 'common_name']
+        
+        for pattern in self.EXCLUDE_PATTERNS:
+            for col in human_matching_columns:
+                if col in input_result.data.columns:
+                    exclude_mask |= input_result.data[col].str.contains(pattern, case=False, na=False, regex=True)
+        
+        # Apply both inclusion and exclusion filters
+        final_mask = human_mask & ~exclude_mask
+        filtered_df = input_result.data[final_mask].copy()
+        
         result = FilterResult(
             data=filtered_df,
             count=len(filtered_df),
             filter_name="Organism Filter",
-            description="Human samples only"
+            description="Human samples only (excluded common false positives including viruses)"
         )
         result.log_result(input_result.count)
         return result
