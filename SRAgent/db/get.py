@@ -44,6 +44,7 @@ def import_required_modules():
             SequencingStrategyFilter,
             CancerStatusFilter,
             TissueSourceFilter,
+            CellLineFilter,
             KeywordSearchFilter,
             LimitFilter
         )
@@ -59,6 +60,7 @@ def import_required_modules():
                 'SequencingStrategyFilter': SequencingStrategyFilter,
                 'CancerStatusFilter': CancerStatusFilter,
                 'TissueSourceFilter': TissueSourceFilter,
+                'CellLineFilter': CellLineFilter,
                 'KeywordSearchFilter': KeywordSearchFilter,
                 'LimitFilter': LimitFilter
             }

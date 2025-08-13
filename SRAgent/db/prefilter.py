@@ -538,7 +538,7 @@ class TissueSourceFilter(BaseFilter):
     
     def apply(self, input_result: FilterResult) -> FilterResult:
         """
-        Filter samples from major tissue systems, excluding cell lines.
+        Filter samples from major tissue systems.
         """
         if input_result.data.empty:
             return input_result
@@ -571,14 +571,8 @@ class TissueSourceFilter(BaseFilter):
             r'\b(?:bone|cartilage|osteoblast|osteoclast|chondrocyte|joint|ligament|tendon)\b'
         ]
         
-        # Exclude cell line keywords
-        cell_line_patterns = [
-            r'\b(?:cell line|immortalized|HEK293|HeLa|Jurkat|CHO|NIH/3T3|K562|U2OS|HEPG2|A549)\b'
-        ]
-        
         # Filter records with primary tissue samples in memory
         tissue_mask = pd.Series([False] * len(input_result.data), index=input_result.data.index)
-        cell_line_mask = pd.Series([False] * len(input_result.data), index=input_result.data.index)
         
         text_columns = ['overall_design', 'characteristics_ch1', 'summary']
         
@@ -587,19 +581,13 @@ class TissueSourceFilter(BaseFilter):
                 if col in input_result.data.columns:
                     tissue_mask |= input_result.data[col].str.contains(pattern, case=False, na=False, regex=True)
         
-        for pattern in cell_line_patterns:
-            for col in text_columns:
-                if col in input_result.data.columns:
-                    cell_line_mask |= input_result.data[col].str.contains(pattern, case=False, na=False, regex=True)
-        
-        final_mask = tissue_mask & ~cell_line_mask
-        filtered_df = input_result.data[final_mask].copy()
+        filtered_df = input_result.data[tissue_mask].copy()
         
         result = FilterResult(
             data=filtered_df,
             count=len(filtered_df),
             filter_name="Tissue Source",
-            description="Primary tissue samples (not cell lines)"
+            description="Primary tissue samples"
         )
         
         result.log_result(input_result.count)
