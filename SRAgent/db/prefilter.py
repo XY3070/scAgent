@@ -259,13 +259,23 @@ class OrganismFilter(BaseFilter):
             return input_result
         
         # Filter records with specified organisms in memory
-        human_mask = (
-            input_result.data['organism_ch1'].str.contains('homo sapiens', case=False, na=False) |
-            input_result.data['scientific_name'].str.contains('homo sapiens', case=False, na=False) |
-            input_result.data['organism'].str.contains('homo sapiens', case=False, na=False) |
-            input_result.data['source_name_ch1'].str.contains('human', case=False, na=False) |
-            input_result.data['common_name'].str.contains('human', case=False, na=False)
-        )
+        # Check if each column exists before using it
+        human_mask = pd.Series([False] * len(input_result.data), index=input_result.data.index)
+        
+        if 'organism_ch1' in input_result.data.columns:
+            human_mask |= input_result.data['organism_ch1'].str.contains('homo sapiens', case=False, na=False)
+            
+        if 'scientific_name' in input_result.data.columns:
+            human_mask |= input_result.data['scientific_name'].str.contains('homo sapiens', case=False, na=False)
+            
+        if 'organism' in input_result.data.columns:
+            human_mask |= input_result.data['organism'].str.contains('homo sapiens', case=False, na=False)
+            
+        if 'source_name_ch1' in input_result.data.columns:
+            human_mask |= input_result.data['source_name_ch1'].str.contains('human', case=False, na=False)
+            
+        if 'common_name' in input_result.data.columns:
+            human_mask |= input_result.data['common_name'].str.contains('human', case=False, na=False)
         
         # Create exclusion mask for false positive keywords (only in the same 5 columns used for human matching)
         exclude_mask = pd.Series([False] * len(input_result.data), index=input_result.data.index)
