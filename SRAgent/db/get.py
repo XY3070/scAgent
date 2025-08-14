@@ -193,7 +193,17 @@ def run_enhanced_workflow(
     search_term: Optional[str] = None,
     limit: int = 20000000,
     min_sc_confidence: int = 1,
-    export_json: bool = True
+    export_json: bool = True,
+    # Filter switches
+    include_initial_dataset: bool = True,
+    include_basic_availability: bool = True,
+    include_organism: bool = True,
+    include_single_cell: bool = False,
+    include_tissue_source: bool = False,
+    include_sequencing_strategy: bool = False,
+    include_cancer_status: bool = False,
+    include_search_term: bool = False,
+    include_exclusion_single_cell: bool = True
 ) -> Dict[str, Any]:
     """
     Runs the enhanced AI workflow directly from get.py.
@@ -206,6 +216,16 @@ def run_enhanced_workflow(
         search_term: Search term to filter datasets.
         limit: Maximum number of records to process.
         min_sc_confidence: Minimum single-cell confidence score.
+        export_json: Whether to export JSON.
+        include_initial_dataset: Whether to include initial dataset filter.
+        include_basic_availability: Whether to include basic availability filter.
+        include_organism: Whether to include organism filter.
+        include_single_cell: Whether to include single cell filter.
+        include_tissue_source: Whether to include tissue source filter.
+        include_sequencing_strategy: Whether to include sequencing strategy filter.
+        include_cancer_status: Whether to include cancer status filter.
+        include_search_term: Whether to include keyword search filter.
+        include_exclusion_single_cell: Whether to include exclusion single cell filter.
 
     Returns:
         A dictionary containing the workflow execution status and results.
@@ -248,20 +268,35 @@ def run_enhanced_workflow(
     if db_connect is None:
         return {"status": "error", "message": "Database connection function not available"}
 
-    if 'get_prefiltered_datasets_functional' not in MODULES.get('prefilter_functions', {}):
-        logger.error("get_prefiltered_datasets_functional not available. Please check imports.")
-        return {"status": "error", "message": "Workflow function not found"}
+    # Check if prefilter module is available
+    if not MODULES.get('prefilter'):
+        logger.error("prefilter module not available. Please check imports.")
+        return {"status": "error", "message": "Prefilter module not found"}
 
     try:
         with db_connect() as conn:
-            result = MODULES['prefilter_functions']['get_prefiltered_datasets_functional'](
+            # Create filter chain using prefilter module
+            filter_chain = MODULES['prefilter']['create_filter_chain'](
                 conn=conn,
                 organisms=organisms,
                 search_term=search_term,
                 limit=limit,
                 min_sc_confidence=min_sc_confidence,
-                modules=MODULES # Pass the MODULES dictionary
+                include_initial_dataset=include_initial_dataset,
+                include_basic_availability=include_basic_availability,
+                include_organism=include_organism,
+                include_single_cell=include_single_cell,
+                include_tissue_source=include_tissue_source,
+                include_sequencing_strategy=include_sequencing_strategy,
+                include_cancer_status=include_cancer_status,
+                include_search_term=include_search_term,
+                include_exclusion_single_cell=include_exclusion_single_cell
             )
+            
+            # Apply filter chain
+            final_result = MODULES['prefilter']['apply_filter_chain'](filter_chain)
+            result = final_result.data
+            
         logger.info(f"Workflow execution complete.")
 
         # for ai enhancement  

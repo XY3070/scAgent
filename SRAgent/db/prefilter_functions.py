@@ -21,6 +21,13 @@ def get_prefiltered_datasets_functional(
     include_sequencing_strategy: bool = False,
     include_cancer_status: bool = False,
     include_search_term: bool = False,
+    # Filter switches
+    include_initial_dataset: bool = True,
+    include_basic_availability: bool = True,
+    include_organism: bool = True,
+    include_single_cell: bool = True,
+    include_tissue_source: bool = True,
+    include_exclusion_single_cell: bool = False,
     modules: Dict[str, Any] = None # Pass MODULES explicitly
 ) -> pd.DataFrame:
     """
@@ -38,6 +45,12 @@ def get_prefiltered_datasets_functional(
         include_sequencing_strategy: Whether to include sequencing strategy filter
         include_cancer_status: Whether to include cancer status filter
         include_search_term: Whether to include keyword search filter
+        include_initial_dataset: Whether to include initial dataset filter
+        include_basic_availability: Whether to include basic availability filter
+        include_organism: Whether to include organism filter
+        include_single_cell: Whether to include single cell filter
+        include_tissue_source: Whether to include tissue source filter
+        include_exclusion_single_cell: Whether to include exclusion single cell filter
         modules: Dictionary of imported modules (e.g., prefilter)
     
     Returns:
@@ -49,7 +62,7 @@ def get_prefiltered_datasets_functional(
             logger.error("prefilter module not available in passed modules")
             return pd.DataFrame()
 
-        # Create filter chain
+        # Create filter chain with all filter switches
         filter_chain = modules['prefilter']['create_filter_chain'](
             conn=conn,
             organisms=organisms,
@@ -58,7 +71,13 @@ def get_prefiltered_datasets_functional(
             min_sc_confidence=min_sc_confidence,
             include_sequencing_strategy=include_sequencing_strategy,
             include_cancer_status=include_cancer_status,
-            include_search_term=include_search_term
+            include_search_term=include_search_term,
+            include_initial_dataset=include_initial_dataset,
+            include_basic_availability=include_basic_availability,
+            include_organism=include_organism,
+            include_single_cell=include_single_cell,
+            include_tissue_source=include_tissue_source,
+            include_exclusion_single_cell=include_exclusion_single_cell
         )
         
         # Apply filter chain

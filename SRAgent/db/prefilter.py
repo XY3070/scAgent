@@ -228,20 +228,20 @@ class OrganismFilter(BaseFilter):
     
     # Common false positive keywords that should be excluded even if they match human
     EXCLUDE_PATTERNS = [
-        r'\bmouse\b', r'\bmurine\b', r'\bmus musculus\b',  # Mouse-related terms
-        r'\brat\b', r'\brattus\b', r'\brattus norvegicus\b',  # Rat-related terms
-        r'\bfruit fly\b', r'\bdrosophila\b', r'\bdrosophila melanogaster\b',  # Fruit fly
-        r'\bzebrafish\b', r'\bdanio rerio\b',  # Zebrafish
-        r'\bmonkey\b', r'\bmacaque\b', r'\brhesus\b',  # Non-human primates
-        r'\bmodel organism\b',  # Generic model organism mentions
-        r'\bcell line\b',  # Cell lines that might be human but are not primary tissue
-        r'\bhepg2\b', r'\bhek293\b', r'\bhela\b',  # Common human cell lines
-        r'\bxenograft\b',  # Xenograft models (human cells in other organisms)
-        r'\bhumanized\b',  # Humanized models (modified organisms)
-        r'\bsars-cov\b', r'\bsars cov\b', r'\bcovid\b', r'\bsars-2\b', r'\bnovel coronavirus\b',  # Viruses often associated with humans
-        r'\bh1n1\b', r'\bh3n2\b', r'\binfluenza\b',  # Influenza viruses
-        r'\bhiv\b', r'\bhepatitis\b', r'\bebv\b', r'\bepstein-barr\b',  # Other human-associated viruses
-        r'\bvirus\b.*\bhomo sapiens\b', r'\bhomo sapiens\b.*\bvirus\b'  # Virus and human co-occurrence patterns
+        r'\b(?:mouse)\b', r'\b(?:murine)\b', r'\b(?:mus musculus)\b',  # Mouse-related terms
+        r'\b(?:rat)\b', r'\b(?:rattus)\b', r'\b(?:rattus norvegicus)\b',  # Rat-related terms
+        r'\b(?:fruit fly)\b', r'\b(?:drosophila)\b', r'\b(?:drosophila melanogaster)\b',  # Fruit fly
+        r'\b(?:zebrafish)\b', r'\b(?:danio rerio)\b',  # Zebrafish
+        r'\b(?:monkey)\b', r'\b(?:macaque)\b', r'\b(?:rhesus)\b',  # Non-human primates
+        r'\b(?:model organism)\b',  # Generic model organism mentions
+        r'\b(?:cell line)\b',  # Cell lines that might be human but are not primary tissue
+        r'\b(?:hepg2)\b', r'\b(?:hek293)\b', r'\b(?:hela)\b',  # Common human cell lines
+        r'\b(?:xenograft)\b',  # Xenograft models (human cells in other organisms)
+        r'\b(?:humanized)\b',  # Humanized models (modified organisms)
+        r'\b(?:sars-cov)\b', r'\b(?:sars cov)\b', r'\b(?:covid)\b', r'\b(?:sars-2)\b', r'\b(?:novel coronavirus)\b',  # Viruses often associated with humans
+        r'\b(?:h1n1)\b', r'\b(?:h3n2)\b', r'\b(?:influenza)\b',  # Influenza viruses
+        r'\b(?:hiv)\b', r'\b(?:hepatitis)\b', r'\b(?:ebv)\b', r'\b(?:epstein-barr)\b',  # Other human-associated viruses
+        r'\b(?:virus)\b.*\b(?:homo sapiens)\b', r'\b(?:homo sapiens)\b.*\b(?:virus)\b'  # Virus and human co-occurrence patterns
     ]
     
     def __init__(self, conn: connection, organisms: List[str]):
@@ -464,7 +464,7 @@ class ExclusionSingleCellFilter(BaseFilter):
             for col in text_columns:
                 if col in input_result.data.columns:
                     # Use .fillna('') to treat NaN as empty strings for regex matching
-                    exclude_mask |= input_result.data[col].fillna('').str.contains(pattern, case=False, na=False, regex=True)
+                    str.extract.exclude_mask |= input_result.data[col].fillna('').str.contains(pattern, case=False, na=False, regex=True)
 
         # Keep records that are NOT in the exclude_mask
         filtered_df = input_result.data[~exclude_mask].copy()
@@ -793,6 +793,7 @@ def create_filter_chain(conn: connection,
         include_sequencing_strategy: Whether to include sequencing strategy filter
         include_cancer_status: Whether to include cancer status filter
         include_search_term: Whether to include keyword search filter
+        include_exclusion_single_cell: Whether to include exclusion single cell filter
     
     Returns:
         List of filter objects
