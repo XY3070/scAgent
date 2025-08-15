@@ -1,5 +1,6 @@
 import warnings
 import pandas as pd
+import warnings
 import logging
 import re
 from typing import List, Dict, Any, Optional, Set
@@ -140,10 +141,25 @@ class InitialDatasetFilter(BaseFilter):
 
             # Define desired cols and check availability 
             desired_cols = [
-                'sra_ID', 'study_title', 'summary', 'overall_design', 'scientific_name',
-                'library_strategy', 'technology', 'characteristics_ch1', 'gse_title', 
-                'gsm_title', 'organism_ch1', 'source_name_ch1', 'common_name', 
-                'gsm_submission_date', 'sc_conf_score', 'study_alias'
+                # coral identifier
+                'sra_ID', 'study_alias', 'experiment_name', 'run_alias', 'sample_alias', 
+                # title and description
+                'study_title', 'study_abstract', 'study_description', 'experiment_title', 
+                'gse_title', 'gsm_title', 'summary', 'overall_design', 'design_description', 
+                # biological info
+                'scientific_name', 'organism_ch1', 'common_name', 'source_name_ch1',
+                'characteristics_ch1', 'description',
+                # tech info
+                'library_strategy', 'library_source', 'library_selection', 'library_layout', 
+                'technology', 'platform', 'instrument_model', 'platoform_parameters', 
+                # time info  
+                'gsm_submission_date', 'submission_date', 'run_date', 
+                # single cell info
+                'sc_conf_score', 
+                # attribute info  
+                'sample_attribute', 'experiment_attribute', 'study_attribute', 'run_attribute', 
+                # other info
+                'pubmed_id', 'center_project_name', 'spots', 'bases'
             ]
 
             # Select only columns that exist
@@ -465,7 +481,9 @@ class ExclusionSingleCellFilter(BaseFilter):
             for col in text_columns:
                 if col in input_result.data.columns:
                     # Use .fillna('') to treat NaN as empty strings for regex matching
-                    str.extract.exclude_mask |= input_result.data[col].fillna('').str.contains(pattern, flags=re.IGNORECASE, na=False, regex=True)
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore", category=UserWarning)
+                        exclude_mask |= input_result.data[col].fillna('').str.contains(pattern, flags=re.IGNORECASE, na=False, regex=True)
 
         # Keep records that are NOT in the exclude_mask
         filtered_df = input_result.data[~exclude_mask].copy()
