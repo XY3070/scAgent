@@ -6,7 +6,11 @@ default:
   db_password: "" 
   db_timeout: 120
   service_tier: "standard"
+<<<<<<< HEAD
   flex_timeout: 360
+=======
+  flex_timeout: 900
+>>>>>>> feature/feat_aiFilter
 test:
   db_name: "scagent"
   models:
@@ -199,7 +203,7 @@ claude:
     entrez_convert: "medium"
     find_datasets: "medium"
     step_summary: ""
-  qwen_api_base: "http://10.28.1.21:30080/v1"
+  qwen_api_base: "http://10.28.1.24:30088/v1"
   qwen_api_key: ""
   service_tier:
     default: "default"
