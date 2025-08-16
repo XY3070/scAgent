@@ -4,9 +4,9 @@ default:
   db_port: 5432
   db_user: "yanglab"
   db_password: "" 
-  db_timeout: 60
+  db_timeout: 120
   service_tier: "standard"
-  flex_timeout: 180
+  flex_timeout: 900
 test:
   db_name: "scagent"
   models:
@@ -197,7 +197,7 @@ claude:
     entrez_convert: "medium"
     find_datasets: "medium"
     step_summary: ""
-  qwen_api_base: "http://10.28.1.21:30080/v1"
+  qwen_api_base: "http://10.28.1.24:30088/v1"
   qwen_api_key: ""
   service_tier:
     default: "default"
